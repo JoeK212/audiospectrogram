@@ -1,0 +1,19 @@
+# sound / relief — Joe.K, axisbim.io
+#
+# Static single-file app. No build step, no serverless functions, no
+# external dependencies (three.js is embedded inline in index.html) —
+# so there's nothing here to configure beyond "serve the repo root."
+
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Nothing is fetched over the network at runtime (audio decode + STFT +
+# G-code/STL export all run client-side against files the user drops in),
+# so no CSP connect-src exceptions or redirects are needed.

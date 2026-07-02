@@ -1,0 +1,8 @@
+# Local-only — not part of the public repo (see README's convention note)
+audit_deploy.js
+HANDOFF_*.md
+test_*.js
+
+# OS / editor cruft
+.DS_Store
+*.swp
