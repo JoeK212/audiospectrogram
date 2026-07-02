@@ -11,6 +11,17 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.8  — preset save/load (name it, save it, pick it from a dropdown
+          later, delete when done). Stored in localStorage, this browser
+          only — matches the app's "nothing leaves your machine" ethos,
+          same as the audio processing itself. Presets capture every
+          board/carve/tooling/motion value plus invert, roughing, and
+          the mm/in display preference. Stores raw mm-space values (the
+          same domain the sliders already operate in via bindField, no
+          separate unit-conversion path to get wrong). Tolerates presets
+          missing newer fields (e.g. one saved before "stepdown"
+          existed) without throwing or clobbering unrelated params —
+          verified via round-trip test.
   v1.7  — real multi-level stepdown roughing, replacing the single-pass
           "clip to allowance" roughing that only ever cut in one plunge.
           New "rough stepdown" param (Advanced) controls max Z removed
@@ -273,6 +284,17 @@
   .tabBtn.active{ background:var(--accent); color:var(--black); }
   .tabBtn:not(.active):hover{ color:var(--accent); }
 
+  .presetRow, .presetSaveRow{ display:flex; gap:6px; margin-bottom:8px; }
+  .presetRow select, .presetSaveRow input[type=text]{
+    flex:1; min-width:0; background:transparent; border:1px solid var(--line); color:var(--ink);
+    font-family:var(--mono); font-size:11px; padding:6px 8px; border-radius:0;
+  }
+  .presetRow select{ cursor:pointer; }
+  .presetRow select:disabled, .presetSaveRow input:disabled{ color:var(--ink-dim); cursor:not-allowed; }
+  .presetBtn{
+    width:auto; margin-top:0; padding:6px 12px; font-size:10.5px; flex-shrink:0;
+  }
+
   .advancedOnly.hidden{ display:none; }
 
   .field label{ align-items:baseline; }
@@ -295,7 +317,7 @@
     <div class="wordmark">sound <b>/</b> relief</div>
     <div class="meta">
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
-      <div class="credit" id="versionTag">v1.7 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+      <div class="credit" id="versionTag">v1.8 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
     </div>
   </header>
 
@@ -319,6 +341,16 @@
         <button type="button" class="tabBtn active" data-unit="mm" data-tip="Display and type values in millimeters.">mm</button>
         <button type="button" class="tabBtn" data-unit="in" data-tip="Display and type values in inches. G-code is still exported in mm (G21) regardless of this setting.">in</button>
       </div>
+    </div>
+
+    <div class="section-label">presets</div>
+    <div class="presetRow" data-tip="Saved presets are stored in this browser only (localStorage) — nothing leaves your machine.">
+      <select id="presetSelect"><option value="">— select —</option></select>
+      <button type="button" class="btn ghost presetBtn" id="presetDelete" data-tip="Delete the selected preset.">&times;</button>
+    </div>
+    <div class="presetSaveRow">
+      <input type="text" id="presetName" placeholder="preset name" maxlength="40">
+      <button type="button" class="btn ghost presetBtn" id="presetSave" data-tip="Save every current board/carve/tooling/motion value under this name, so you can snap back to it later.">save</button>
     </div>
 
     <div class="section-label">board</div>
@@ -424,7 +456,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.7";
+  const APP_VERSION = "1.8";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -581,6 +613,101 @@
   }
   const boundFields = fieldDefs.map(bindField);
   function refreshAllDisplays(){ boundFields.forEach(f => f._refresh()); }
+
+  // ---------- presets (save/load/delete, localStorage-only) ----------
+  // Stores raw mm-space values — the same domain params[] and the range
+  // inputs already operate in regardless of the mm/in display toggle — so
+  // loading a preset never has to think about unit conversion, just like
+  // bindField()'s own range<->params relationship.
+  const PRESET_KEY = "soundRelief.presets.v1";
+
+  function loadPresetStore(){
+    try{
+      const raw = localStorage.getItem(PRESET_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch(err){
+      log("couldn't read saved presets (" + err.message + ")", "warn");
+      return {};
+    }
+  }
+
+  function savePresetStore(store){
+    try{
+      localStorage.setItem(PRESET_KEY, JSON.stringify(store));
+      return true;
+    } catch(err){
+      log("couldn't save preset — browser storage may be full or disabled (" + err.message + ")", "warn");
+      return false;
+    }
+  }
+
+  function refreshPresetSelect(selectName){
+    const store = loadPresetStore();
+    const sel = $("presetSelect");
+    sel.innerHTML = '<option value="">— select —</option>';
+    Object.keys(store).sort((a,b)=>a.localeCompare(b)).forEach(name=>{
+      const opt = document.createElement("option");
+      opt.value = name; opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    if(selectName && store[selectName]) sel.value = selectName;
+  }
+
+  function collectPreset(){
+    const preset = { unitSystem, invert: $("invert").checked, roughing: $("roughing").checked };
+    fieldDefs.forEach(def => { preset[def.key] = params[def.key]; });
+    return preset;
+  }
+
+  function applyPreset(preset){
+    fieldDefs.forEach(def => {
+      if(!(def.key in preset)) return; // tolerate presets saved by older versions missing a newer field
+      const v = preset[def.key];
+      params[def.key] = v;
+      $(def.id).value = v; // ranges always store mm regardless of display unit — see bindField()
+    });
+    if(typeof preset.invert === "boolean") $("invert").checked = preset.invert;
+    if(typeof preset.roughing === "boolean") $("roughing").checked = preset.roughing;
+    if(preset.unitSystem && preset.unitSystem !== unitSystem){
+      $("unitTabs").querySelector('[data-unit="' + preset.unitSystem + '"]').click(); // reuses existing unit-switch wiring, incl. its own refreshAllDisplays()
+    } else {
+      refreshAllDisplays();
+    }
+    if(heightmap) requestRebuild();
+  }
+
+  $("presetSave").addEventListener("click", ()=>{
+    const name = $("presetName").value.trim();
+    if(!name){ log("type a name before saving a preset", "warn"); return; }
+    const store = loadPresetStore();
+    const overwriting = name in store;
+    store[name] = collectPreset();
+    if(!savePresetStore(store)) return;
+    refreshPresetSelect(name);
+    $("presetName").value = "";
+    log((overwriting ? "overwrote" : "saved") + " preset \"" + name + "\"", "ok");
+  });
+
+  $("presetSelect").addEventListener("change", ()=>{
+    const name = $("presetSelect").value;
+    if(!name) return;
+    const store = loadPresetStore();
+    if(!store[name]){ log("preset \"" + name + "\" no longer exists", "warn"); refreshPresetSelect(); return; }
+    applyPreset(store[name]);
+    log("loaded preset \"" + name + "\"", "ok");
+  });
+
+  $("presetDelete").addEventListener("click", ()=>{
+    const name = $("presetSelect").value;
+    if(!name){ log("select a preset to delete first", "warn"); return; }
+    const store = loadPresetStore();
+    delete store[name];
+    savePresetStore(store);
+    refreshPresetSelect();
+    log("deleted preset \"" + name + "\"", "ok");
+  });
+
+  refreshPresetSelect();
 
   $("invert").addEventListener("change", ()=>{ if(heightmap) requestRebuild(); });
   $("roughing").addEventListener("change", ()=>{ if(heightmap) requestRebuild(); });
