@@ -11,6 +11,16 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.13 — added 4 built-in starter presets (Quick Test, Decorative
+          Shallow, Deep Relief, Fine Detail) — same role as Modulor
+          Massing's Tower/Podium/Courtyard: ready-made starting points,
+          not an empty save-your-own list. Fixed set, not stored in
+          localStorage, not deletable, shown in their own "Starter
+          presets" optgroup separate from "My presets". Every value
+          checked against its actual slider min/max before shipping —
+          verified standalone, none silently clamp on load. Saving a
+          user preset under a starter preset's exact name is blocked
+          with a warning rather than silently shadowing it.
   v1.12 — presets weren't showing after saving because localStorage on
           file:// pages (i.e. every locally re-downloaded copy of this
           app, rather than the deployed site) can silently no-op writes
@@ -374,7 +384,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.12 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.13 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -515,7 +525,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.12";
+  const APP_VERSION = "1.13";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -703,6 +713,37 @@
   // bindField()'s own range<->params relationship.
   const PRESET_KEY = "soundRelief.presets.v1";
 
+  // Fixed starter presets — always available regardless of storage,
+  // not saved to/loaded from localStorage, not deletable. Same role as
+  // Modulor Massing's Tower/Podium/Courtyard: ready-made starting points
+  // rather than an empty save-your-own list with nothing in it yet.
+  // Values checked against every field's actual slider min/max before
+  // shipping (see fieldDefs' range inputs) so none of these silently
+  // clamp on load.
+  const BUILTIN_PRESETS = {
+    "Quick Test": {
+      boardW:150, boardH:100, maxDepth:3, maxFreq:3000,
+      finishBit:3, roughBit:6, allowance:0.4, stepdown:1.5,
+      feed:1200, plunge:400, safeZ:5, invert:false, roughing:false, unitSystem:"mm"
+    },
+    "Decorative Shallow": {
+      boardW:250, boardH:150, maxDepth:4, maxFreq:3000,
+      finishBit:3, roughBit:6, allowance:0.5, stepdown:2,
+      feed:900, plunge:300, safeZ:5, invert:false, roughing:true, unitSystem:"mm"
+    },
+    "Deep Relief": {
+      boardW:300, boardH:180, maxDepth:12, maxFreq:4000,
+      finishBit:4, roughBit:8, allowance:0.6, stepdown:3,
+      feed:800, plunge:250, safeZ:6, invert:false, roughing:true, unitSystem:"mm"
+    },
+    "Fine Detail": {
+      boardW:250, boardH:150, maxDepth:5, maxFreq:6000,
+      finishBit:1.5, roughBit:6, allowance:0.4, stepdown:2,
+      feed:700, plunge:250, safeZ:5, invert:false, roughing:true, unitSystem:"mm"
+    },
+  };
+  const BUILTIN_PREFIX = "__builtin__:"; // disambiguates a builtin's <option value> from a same-named user preset
+
   function loadPresetStore(){
     try{
       const raw = localStorage.getItem(PRESET_KEY);
@@ -736,12 +777,32 @@
     const store = loadPresetStore();
     const sel = $("presetSelect");
     sel.innerHTML = '<option value="">— select —</option>';
-    Object.keys(store).sort((a,b)=>a.localeCompare(b)).forEach(name=>{
+
+    const starterGroup = document.createElement("optgroup");
+    starterGroup.label = "Starter presets";
+    Object.keys(BUILTIN_PRESETS).forEach(name=>{
       const opt = document.createElement("option");
-      opt.value = name; opt.textContent = name;
-      sel.appendChild(opt);
+      opt.value = BUILTIN_PREFIX + name; opt.textContent = name;
+      starterGroup.appendChild(opt);
     });
-    if(selectName && store[selectName]) sel.value = selectName;
+    sel.appendChild(starterGroup);
+
+    const userNames = Object.keys(store).sort((a,b)=>a.localeCompare(b));
+    if(userNames.length){
+      const userGroup = document.createElement("optgroup");
+      userGroup.label = "My presets";
+      userNames.forEach(name=>{
+        const opt = document.createElement("option");
+        opt.value = name; opt.textContent = name;
+        userGroup.appendChild(opt);
+      });
+      sel.appendChild(userGroup);
+    }
+
+    if(selectName){
+      const optionValue = BUILTIN_PRESETS[selectName] ? BUILTIN_PREFIX + selectName : selectName;
+      if(store[selectName] || BUILTIN_PRESETS[selectName]) sel.value = optionValue;
+    }
   }
 
   function collectPreset(){
@@ -770,6 +831,7 @@
   $("presetSave").addEventListener("click", ()=>{
     const name = $("presetName").value.trim();
     if(!name){ log("type a name before saving a preset", "warn"); return; }
+    if(BUILTIN_PRESETS[name]){ log("\"" + name + "\" is a starter preset name — pick a different name for yours", "warn"); return; }
     const store = loadPresetStore();
     const overwriting = name in store;
     store[name] = collectPreset();
@@ -780,8 +842,15 @@
   });
 
   $("presetSelect").addEventListener("change", ()=>{
-    const name = $("presetSelect").value;
-    if(!name) return;
+    const raw = $("presetSelect").value;
+    if(!raw) return;
+    if(raw.startsWith(BUILTIN_PREFIX)){
+      const name = raw.slice(BUILTIN_PREFIX.length);
+      applyPreset(BUILTIN_PRESETS[name]);
+      log("loaded starter preset \"" + name + "\"", "ok");
+      return;
+    }
+    const name = raw;
     const store = loadPresetStore();
     if(!store[name]){ log("preset \"" + name + "\" no longer exists", "warn"); refreshPresetSelect(); return; }
     applyPreset(store[name]);
@@ -789,8 +858,10 @@
   });
 
   $("presetDelete").addEventListener("click", ()=>{
-    const name = $("presetSelect").value;
-    if(!name){ log("select a preset to delete first", "warn"); return; }
+    const raw = $("presetSelect").value;
+    if(!raw){ log("select a preset to delete first", "warn"); return; }
+    if(raw.startsWith(BUILTIN_PREFIX)){ log("starter presets can't be deleted", "warn"); return; }
+    const name = raw;
     const store = loadPresetStore();
     delete store[name];
     savePresetStore(store);
