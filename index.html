@@ -11,6 +11,14 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.14 — fixed illegible preset dropdown options. The <select> used
+          color:var(--ink) (light cream, meant for its dark closed-state
+          background), but a native dropdown popup renders on its own
+          light/white background regardless of the select's own
+          transparent/dark styling — that's OS/browser-controlled, not
+          reachable from the select's CSS. Result: near-invisible pale
+          text on white. Options/optgroups now get their own explicit
+          dark-on-light colors instead of inheriting the select's.
   v1.13 — added 4 built-in starter presets (Quick Test, Decorative
           Shallow, Deep Relief, Fine Detail) — same role as Modulor
           Massing's Tower/Podium/Courtyard: ready-made starting points,
@@ -357,6 +365,15 @@
   }
   .presetRow select{ cursor:pointer; }
   .presetRow select:disabled, .presetSaveRow input:disabled{ color:var(--ink-dim); cursor:not-allowed; }
+  /* Native <select> dropdown popups render on their own light/white
+     background regardless of the select's transparent/dark styling above —
+     that's OS/browser-controlled, not something the select's own CSS
+     reaches. Without this, the popup's options inherited the select's
+     light --ink text color and were nearly invisible against that white
+     popup background. Options and optgroup labels get their own explicit
+     dark-on-light colors here instead. */
+  .presetRow select option{ color:var(--black); background:#fff; }
+  .presetRow select optgroup{ color:#666; background:#fff; font-style:normal; }
   .presetBtn{
     width:auto; margin-top:0; padding:6px 12px; font-size:10.5px; flex-shrink:0;
   }
@@ -384,7 +401,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.13 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.14 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -525,7 +542,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.13";
+  const APP_VERSION = "1.14";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
