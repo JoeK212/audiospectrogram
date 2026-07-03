@@ -11,6 +11,23 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.19  — trim range: pick a window of the track to feed the relief,
+          instead of always the whole file. Dual drag-handle bar plus
+          numeric start/end fields (in seconds), reset-to-full button.
+          Deliberately independent of playback — Play/Stop/seek above
+          still cover the whole file; trim only changes what
+          buildHeightmapFromCache() resamples into the board. Hoisted
+          the STFT frame constants (nperseg/noverlap/hop) to module
+          scope so the trim-to-frame math shares one definition with
+          analyzeSTFT() instead of risking a second copy drifting out
+          of sync. Board-width mapping is now [trimStart, trimEnd]
+          instead of always [0, full duration] — trimStart/trimEnd
+          default to 0/audioDuration, so this is a strict
+          generalization of the old behavior, not a special case.
+          "est. duration" stat now shows the trimmed span, since that's
+          what's actually being carved. Verified frame-mapping math and
+          clamp logic (crossed handles, out-of-bounds drags, near-end
+          trims) standalone before shipping.
   v1.18 — seek bar and ±5s nudge buttons, since Play/Stop alone had no
           way to move around within a clip. Seek bar: pointerdown pauses
           any live playback first (Web Audio can't reposition a running
@@ -335,6 +352,34 @@
     width:10px; height:10px; background:var(--accent); border:none; border-radius:0; cursor:pointer;
   }
   .playSeekRow input[type=range]::-moz-range-track{ height:1px; background:var(--line); }
+
+  /* Custom dual-handle trim bar — a native range input only has one thumb,
+     no built-in way to represent a selected span between two points, so
+     this is plain divs positioned by percentage, same approach as the
+     preset dropdown for the same underlying reason (native control can't
+     do the thing, so build the thing). */
+  .trimRow{ padding:9px 10px 4px; }
+  .trimBar{ position:relative; height:18px; }
+  .trimTrack{ position:absolute; top:8px; left:0; right:0; height:1px; background:var(--line); }
+  .trimRange{ position:absolute; top:8px; height:1px; background:var(--accent); }
+  .trimHandle{
+    position:absolute; top:3px; width:10px; height:10px; background:var(--accent);
+    border-radius:0; cursor:ew-resize; transform:translateX(-50%); touch-action:none;
+  }
+  .trimHandle:hover, .trimHandle.dragging{ background:var(--ink); }
+  .trimHandle.disabled{ background:var(--line); cursor:not-allowed; pointer-events:none; }
+  .trimInputRow{ display:flex; align-items:center; gap:6px; padding:2px 10px 9px; }
+  .trimInputRow .trimNumInput{
+    width:46px; background:transparent; border:1px solid var(--line); color:var(--ink);
+    font-family:var(--mono); font-size:10.5px; padding:4px 6px; text-align:right; border-radius:0;
+    -moz-appearance:textfield;
+  }
+  .trimInputRow .trimNumInput::-webkit-inner-spin-button,
+  .trimInputRow .trimNumInput::-webkit-outer-spin-button{ -webkit-appearance:none; margin:0; }
+  .trimInputRow .trimNumInput:disabled{ color:var(--ink-dim); cursor:not-allowed; }
+  .trimInputRow span{ font-family:var(--mono); font-size:10px; color:var(--ink-dim); }
+  .trimInputRow .trimUnit{ margin-right:auto; }
+  .trimInputRow .navBtn{ min-width:0; padding:4px 9px; font-size:9.5px; border:1px solid var(--line); }
   .xrayInfo{
     position:absolute; top:64px; right:16px; z-index:5; font-family:var(--mono); font-size:10px;
     color:var(--accent); background: rgba(10,10,10,0.7); border:1px solid var(--line); padding:7px 11px;
@@ -485,7 +530,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.18 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.19 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -596,6 +641,21 @@
         <input type="range" id="playSeek" min="0" max="0" step="0.1" value="0" disabled data-tip="Drag to jump to any point in the sound.">
         <button type="button" class="navBtn" id="navSeekFwd" disabled data-tip="Forward 5 seconds.">5&raquo;</button>
       </div>
+      <div class="trimRow" data-tip="Only this window of the track feeds the relief and G-code — the rest of the file is ignored. Playback above still covers the whole file; this only selects what gets carved.">
+        <div class="trimBar" id="trimBar">
+          <div class="trimTrack"></div>
+          <div class="trimRange" id="trimRange"></div>
+          <div class="trimHandle disabled" id="trimHandleStart" data-handle="start"></div>
+          <div class="trimHandle disabled" id="trimHandleEnd" data-handle="end"></div>
+        </div>
+      </div>
+      <div class="trimInputRow">
+        <input type="number" class="trimNumInput" id="trimStartInput" step="0.1" min="0" disabled>
+        <span>&ndash;</span>
+        <input type="number" class="trimNumInput" id="trimEndInput" step="0.1" min="0" disabled>
+        <span class="trimUnit">s</span>
+        <button type="button" class="navBtn" id="trimReset" disabled data-tip="Reset to the full track.">full</button>
+      </div>
     </div>
     <div class="navTools" id="navTools">
       <button type="button" class="navBtn" id="navHome" data-tip="Reset the view to the default angle and frame the whole board.">home</button>
@@ -636,7 +696,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.18";
+  const APP_VERSION = "1.19";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1115,6 +1175,17 @@
   let dbGridFull=null;   // [frameIdx][freqBinIdx], 0..1 normalized
   let freqStepHz=0, freqBinCount=0;
 
+  // Shared with buildHeightmapFromCache()'s trim-to-frame math below — one
+  // definition of "how many samples per STFT frame" instead of two copies
+  // that could drift apart (same reasoning as PREVIEW_EXAGGERATION).
+  const STFT_NPERSEG = 1024, STFT_NOVERLAP = 768, STFT_HOP = STFT_NPERSEG - STFT_NOVERLAP;
+
+  // Trim range (seconds) — which window of the track actually feeds the
+  // relief/G-code. Deliberately independent of playback: Play/Stop/seek
+  // always cover the full file (this isn't turning into an audio editor),
+  // trim only selects the analysis input. Reset per-file in decodeAndAnalyze.
+  let trimStart = 0, trimEnd = 0;
+
   function decodeAndAnalyze(file){
     if(isPlaying || playSourceNode) stopPlayback();
     setStatus("decoding");
@@ -1168,7 +1239,7 @@
   function analyzeSTFT(){
     setStatus("analyzing");
     log("running STFT...");
-    const nperseg = 1024, noverlap = 768, hop = nperseg - noverlap;
+    const nperseg = STFT_NPERSEG, noverlap = STFT_NOVERLAP, hop = STFT_HOP;
     const win = hannWindow(nperseg);
     const nFramesRaw = Math.max(1, Math.floor((rawSamples.length - nperseg) / hop) + 1);
     const nBins = nperseg/2 + 1;
@@ -1220,6 +1291,7 @@
 
     dbGridFull = dbFrames; // [frame][bin] normalized 0..1
     log(nFramesRaw + " frames x " + nBins + " freq bins analyzed", "ok");
+    trimStart = 0; trimEnd = audioDuration; // full track by default — must be set before the first build below
     buildHeightmapFromCache();
     $("downloadBtn").disabled = false;
     $("downloadStlBtn").disabled = false;
@@ -1230,6 +1302,12 @@
     $("navSeekFwd").disabled = false;
     $("playSeek").disabled = false;
     $("playSeek").max = audioDuration.toFixed(1);
+    $("trimStartInput").disabled = false;
+    $("trimEndInput").disabled = false;
+    $("trimReset").disabled = false;
+    $("trimHandleStart").classList.remove("disabled");
+    $("trimHandleEnd").classList.remove("disabled");
+    updateTrimUI();
     $("emptyState").style.display = "none";
   }
 
@@ -1247,13 +1325,22 @@
     if(freqIdxMax < 1) freqIdxMax = 1;
     const nOrigTime = dbGridFull.length;
 
+    // Board width maps to [trimStart, trimEnd] of the track, not always
+    // the full file — trimStart/trimEnd default to 0/audioDuration so this
+    // is a strict generalization of the old "always the whole track"
+    // behavior, not a special case. Frame index = time * sampleRate / hop,
+    // matching exactly how analyzeSTFT() laid frames out in the first
+    // place (same STFT_HOP constant, not a second copy of it).
+    const frameStart = Math.max(0, Math.min(nOrigTime-1, Math.round(trimStart * rawSR / STFT_HOP)));
+    const frameEnd = Math.max(frameStart+1, Math.min(nOrigTime-1, Math.round(trimEnd * rawSR / STFT_HOP)));
+
     const grid = new Array(nFreqBins);
     for(let fi=0; fi<nFreqBins; fi++){
       const origF = (fi/(nFreqBins-1)) * freqIdxMax;
       const f0 = Math.floor(origF), f1 = Math.min(f0+1, freqIdxMax), ft = origF-f0;
       const row = new Float32Array(nTimeBins);
       for(let ti=0; ti<nTimeBins; ti++){
-        const origT = (ti/(nTimeBins-1)) * (nOrigTime-1);
+        const origT = frameStart + (ti/(nTimeBins-1)) * (frameEnd-frameStart);
         const t0 = Math.floor(origT), t1 = Math.min(t0+1, nOrigTime-1), tt = origT-t0;
         const v00 = dbGridFull[t0][f0], v01 = dbGridFull[t1][f0];
         const v10 = dbGridFull[t0][f1], v11 = dbGridFull[t1][f1];
@@ -1275,7 +1362,7 @@
   }
 
   function updateStats(rows, cols){
-    $("s_dur").textContent = audioDuration.toFixed(1) + "s";
+    $("s_dur").textContent = (trimEnd - trimStart).toFixed(1) + "s";
     $("s_grid").textContent = rows + " x " + cols;
     const pathMm = rows * params.boardW; // approx: one traverse per row
     const finishMin = pathMm / Math.max(params.feed,1);
@@ -1674,6 +1761,82 @@
     playPausedAt = t;
     if(wasPlayingBeforeSeek) startPlayback(); // resume from the scrubbed-to position
     else updatePlayheadAt(t);
+  });
+
+  // ---------- trim (which window of the track feeds the relief) ----------
+  // Independent of playback on purpose — Play/Stop/seek above always cover
+  // the whole file; this only changes what buildHeightmapFromCache() reads.
+  let trimDragHandle = null; // 'start' | 'end' | null while a handle is being dragged
+
+  function clampTrim(movedHandle){
+    trimStart = Math.max(0, Math.min(trimStart, audioDuration));
+    trimEnd = Math.max(0, Math.min(trimEnd, audioDuration));
+    const minGap = Math.min(0.5, audioDuration || 0.5); // keep at least a sliver of a window
+    if(trimEnd - trimStart < minGap){
+      if(movedHandle === "start") trimStart = Math.max(0, trimEnd - minGap);
+      else trimEnd = Math.min(audioDuration, trimStart + minGap);
+    }
+  }
+
+  function updateTrimUI(){
+    if(!audioDuration) return;
+    const startPct = (trimStart/audioDuration)*100;
+    const endPct = (trimEnd/audioDuration)*100;
+    $("trimHandleStart").style.left = startPct + "%";
+    $("trimHandleEnd").style.left = endPct + "%";
+    $("trimRange").style.left = startPct + "%";
+    $("trimRange").style.width = Math.max(0, endPct-startPct) + "%";
+    $("trimStartInput").value = trimStart.toFixed(1);
+    $("trimEndInput").value = trimEnd.toFixed(1);
+  }
+
+  function trimPointerToTime(clientX){
+    const rect = $("trimBar").getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return frac * audioDuration;
+  }
+
+  ["trimHandleStart","trimHandleEnd"].forEach(id=>{
+    $(id).addEventListener("pointerdown", (e)=>{
+      if(!rawSamples || !heightmap) return;
+      trimDragHandle = id === "trimHandleStart" ? "start" : "end";
+      $(id).classList.add("dragging");
+      e.preventDefault();
+    });
+  });
+  document.addEventListener("pointermove", (e)=>{
+    if(!trimDragHandle) return;
+    const t = trimPointerToTime(e.clientX);
+    if(trimDragHandle === "start") trimStart = t; else trimEnd = t;
+    clampTrim(trimDragHandle);
+    updateTrimUI();
+  });
+  document.addEventListener("pointerup", ()=>{
+    if(!trimDragHandle) return;
+    $("trimHandleStart").classList.remove("dragging");
+    $("trimHandleEnd").classList.remove("dragging");
+    trimDragHandle = null;
+    if(dbGridFull) buildHeightmapFromCache();
+  });
+
+  $("trimStartInput").addEventListener("change", (e)=>{
+    trimStart = Number(e.target.value) || 0;
+    clampTrim("start");
+    updateTrimUI();
+    if(dbGridFull) buildHeightmapFromCache();
+  });
+  $("trimEndInput").addEventListener("change", (e)=>{
+    trimEnd = Number(e.target.value) || 0;
+    clampTrim("end");
+    updateTrimUI();
+    if(dbGridFull) buildHeightmapFromCache();
+  });
+  $("trimReset").addEventListener("click", ()=>{
+    if(!audioDuration) return;
+    trimStart = 0; trimEnd = audioDuration;
+    updateTrimUI();
+    if(dbGridFull) buildHeightmapFromCache();
+    log("trim reset to full track", "ok");
   });
 
   function toggleSection(){
