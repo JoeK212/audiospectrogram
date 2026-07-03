@@ -11,6 +11,18 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.15 — replaced the native <select> preset dropdown with a custom
+          div-based listbox. The v1.14 fix made option text legible but
+          the popup itself was still the OS/browser-rendered native
+          dropdown (plain white box, system font, blue highlight) —
+          that's not reachable from CSS in any browser, so it always
+          looked like a stock Windows/Chrome listbox dropped into an
+          otherwise fully custom dark UI. Now fully our own markup:
+          same dark background, same monospace font, accent-color hover,
+          "Starter presets"/"My presets" grouping — matches the rest of
+          the app instead of fighting the platform's own widget chrome.
+          Same behavior otherwise (click an option to load immediately,
+          same disabled-state handling when storage isn't available).
   v1.14 — fixed illegible preset dropdown options. The <select> used
           color:var(--ink) (light cream, meant for its dark closed-state
           background), but a native dropdown popup renders on its own
@@ -359,21 +371,43 @@
   #modeTabs .tabBtn.active{ background:transparent; color:var(--ink); border-bottom-color:var(--accent); }
 
   .presetRow, .presetSaveRow{ display:flex; gap:6px; margin-bottom:8px; }
-  .presetRow select, .presetSaveRow input[type=text]{
+  .presetSaveRow input[type=text]{
     flex:1; min-width:0; background:transparent; border:1px solid var(--line); color:var(--ink);
     font-family:var(--mono); font-size:11px; padding:6px 8px; border-radius:0;
   }
-  .presetRow select{ cursor:pointer; }
-  .presetRow select:disabled, .presetSaveRow input:disabled{ color:var(--ink-dim); cursor:not-allowed; }
-  /* Native <select> dropdown popups render on their own light/white
-     background regardless of the select's transparent/dark styling above —
-     that's OS/browser-controlled, not something the select's own CSS
-     reaches. Without this, the popup's options inherited the select's
-     light --ink text color and were nearly invisible against that white
-     popup background. Options and optgroup labels get their own explicit
-     dark-on-light colors here instead. */
-  .presetRow select option{ color:var(--black); background:#fff; }
-  .presetRow select optgroup{ color:#666; background:#fff; font-style:normal; }
+  .presetSaveRow input:disabled{ color:var(--ink-dim); cursor:not-allowed; }
+
+  /* Custom dropdown, not a native <select> — native dropdown popups are
+     OS/browser-rendered and can't be restyled to match a dark theme at
+     all (no background color, no border, no font, nothing reachable from
+     CSS on the popup itself), so a real one always looks like a stock
+     Windows/Chrome listbox sitting inside an otherwise custom-styled app.
+     This is a plain div-based listbox instead, fully within our own CSS. */
+  .customSelect{ position:relative; flex:1; min-width:0; }
+  .customSelectBtn{
+    width:100%; display:flex; justify-content:space-between; align-items:center;
+    background:transparent; border:1px solid var(--line); color:var(--ink);
+    font-family:var(--mono); font-size:11px; padding:6px 8px; border-radius:0; cursor:pointer;
+  }
+  .customSelectBtn:hover{ border-color:var(--accent); }
+  .customSelectBtn:disabled{ color:var(--ink-dim); cursor:not-allowed; }
+  .customSelectBtn:disabled:hover{ border-color:var(--line); }
+  .customSelectBtn::after{ content:"\25be"; font-size:9px; color:var(--ink-dim); margin-left:8px; }
+  .customSelectMenu{
+    position:absolute; top:calc(100% + 3px); left:0; right:0; z-index:20;
+    max-height:220px; overflow-y:auto; background:var(--black); border:1px solid var(--line);
+    box-shadow:0 10px 28px rgba(0,0,0,0.55);
+  }
+  .customSelectGroup{
+    font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--ink-dim); padding:8px 10px 4px;
+  }
+  .customSelectOption{
+    font-family:var(--mono); font-size:11px; color:var(--ink); padding:7px 10px 7px 16px; cursor:pointer;
+  }
+  .customSelectOption:hover, .customSelectOption.active{ background:var(--accent); color:var(--black); }
+  .customSelectEmpty{ font-family:var(--mono); font-size:10px; color:var(--ink-dim); padding:8px 10px; font-style:italic; }
+
   .presetBtn{
     width:auto; margin-top:0; padding:6px 12px; font-size:10.5px; flex-shrink:0;
   }
@@ -401,7 +435,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.14 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.15 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -428,7 +462,10 @@
 
     <div class="section-label">presets</div>
     <div class="presetRow" data-tip="Saved presets are stored in this browser only (localStorage) — nothing leaves your machine.">
-      <select id="presetSelect" data-tip="Pick a saved preset to load it."><option value="">— select —</option></select>
+      <div class="customSelect" id="presetSelect">
+        <button type="button" class="customSelectBtn" id="presetSelectBtn" data-tip="Pick a saved preset to load it." aria-haspopup="listbox" aria-expanded="false">— select —</button>
+        <div class="customSelectMenu" id="presetSelectMenu" role="listbox" hidden></div>
+      </div>
       <button type="button" class="btn ghost presetBtn" id="presetDelete" data-tip="Delete the selected preset.">&times;</button>
     </div>
     <div class="presetSaveRow">
@@ -542,7 +579,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.14";
+  const APP_VERSION = "1.15";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -790,35 +827,64 @@
     }
   }
 
+  let presetSelectValue = ""; // mirrors what a native <select>.value would hold
+
+  function closePresetMenu(){
+    $("presetSelectMenu").hidden = true;
+    $("presetSelectBtn").setAttribute("aria-expanded", "false");
+  }
+
+  function selectPreset(value, label){
+    presetSelectValue = value;
+    $("presetSelectBtn").textContent = label || "— select —";
+    closePresetMenu();
+  }
+
   function refreshPresetSelect(selectName){
     const store = loadPresetStore();
-    const sel = $("presetSelect");
-    sel.innerHTML = '<option value="">— select —</option>';
+    const menu = $("presetSelectMenu");
+    menu.innerHTML = "";
 
-    const starterGroup = document.createElement("optgroup");
-    starterGroup.label = "Starter presets";
+    function addOption(value, label){
+      const opt = document.createElement("div");
+      opt.className = "customSelectOption";
+      opt.setAttribute("role", "option");
+      opt.textContent = label;
+      opt.addEventListener("click", () => {
+        selectPreset(value, label);
+        handlePresetSelected(value);
+      });
+      menu.appendChild(opt);
+      return opt;
+    }
+
+    const placeholder = addOption("", "— select —");
+    placeholder.style.color = "var(--ink-dim)";
+
+    const starterGroup = document.createElement("div");
+    starterGroup.className = "customSelectGroup";
+    starterGroup.textContent = "Starter presets";
+    menu.appendChild(starterGroup);
     Object.keys(BUILTIN_PRESETS).forEach(name=>{
-      const opt = document.createElement("option");
-      opt.value = BUILTIN_PREFIX + name; opt.textContent = name;
-      starterGroup.appendChild(opt);
+      addOption(BUILTIN_PREFIX + name, name);
     });
-    sel.appendChild(starterGroup);
 
     const userNames = Object.keys(store).sort((a,b)=>a.localeCompare(b));
     if(userNames.length){
-      const userGroup = document.createElement("optgroup");
-      userGroup.label = "My presets";
+      const userGroup = document.createElement("div");
+      userGroup.className = "customSelectGroup";
+      userGroup.textContent = "My presets";
+      menu.appendChild(userGroup);
       userNames.forEach(name=>{
-        const opt = document.createElement("option");
-        opt.value = name; opt.textContent = name;
-        userGroup.appendChild(opt);
+        addOption(name, name);
       });
-      sel.appendChild(userGroup);
     }
 
     if(selectName){
-      const optionValue = BUILTIN_PRESETS[selectName] ? BUILTIN_PREFIX + selectName : selectName;
-      if(store[selectName] || BUILTIN_PRESETS[selectName]) sel.value = optionValue;
+      const value = BUILTIN_PRESETS[selectName] ? BUILTIN_PREFIX + selectName : selectName;
+      if(store[selectName] || BUILTIN_PRESETS[selectName]) selectPreset(value, selectName);
+    } else if(!presetSelectValue){
+      selectPreset("", "— select —");
     }
   }
 
@@ -845,6 +911,21 @@
     if(heightmap) requestRebuild();
   }
 
+  function handlePresetSelected(raw){
+    if(!raw) return;
+    if(raw.startsWith(BUILTIN_PREFIX)){
+      const name = raw.slice(BUILTIN_PREFIX.length);
+      applyPreset(BUILTIN_PRESETS[name]);
+      log("loaded starter preset \"" + name + "\"", "ok");
+      return;
+    }
+    const name = raw;
+    const store = loadPresetStore();
+    if(!store[name]){ log("preset \"" + name + "\" no longer exists", "warn"); refreshPresetSelect(); return; }
+    applyPreset(store[name]);
+    log("loaded preset \"" + name + "\"", "ok");
+  }
+
   $("presetSave").addEventListener("click", ()=>{
     const name = $("presetName").value.trim();
     if(!name){ log("type a name before saving a preset", "warn"); return; }
@@ -858,24 +939,21 @@
     log((overwriting ? "overwrote" : "saved") + " preset \"" + name + "\"", "ok");
   });
 
-  $("presetSelect").addEventListener("change", ()=>{
-    const raw = $("presetSelect").value;
-    if(!raw) return;
-    if(raw.startsWith(BUILTIN_PREFIX)){
-      const name = raw.slice(BUILTIN_PREFIX.length);
-      applyPreset(BUILTIN_PRESETS[name]);
-      log("loaded starter preset \"" + name + "\"", "ok");
-      return;
-    }
-    const name = raw;
-    const store = loadPresetStore();
-    if(!store[name]){ log("preset \"" + name + "\" no longer exists", "warn"); refreshPresetSelect(); return; }
-    applyPreset(store[name]);
-    log("loaded preset \"" + name + "\"", "ok");
+  $("presetSelectBtn").addEventListener("click", ()=>{
+    const menu = $("presetSelectMenu");
+    const opening = menu.hidden;
+    menu.hidden = !opening;
+    $("presetSelectBtn").setAttribute("aria-expanded", String(opening));
+  });
+  document.addEventListener("click", (e)=>{
+    if(!$("presetSelect").contains(e.target)) closePresetMenu();
+  });
+  document.addEventListener("keydown", (e)=>{
+    if(e.key === "Escape") closePresetMenu();
   });
 
   $("presetDelete").addEventListener("click", ()=>{
-    const raw = $("presetSelect").value;
+    const raw = presetSelectValue;
     if(!raw){ log("select a preset to delete first", "warn"); return; }
     if(raw.startsWith(BUILTIN_PREFIX)){ log("starter presets can't be deleted", "warn"); return; }
     const name = raw;
@@ -898,7 +976,7 @@
       localStorage.removeItem(testKey);
       if(!ok) throw new Error("write didn't verify");
     } catch(err){
-      ["presetSelect","presetName","presetSave","presetDelete"].forEach(id=>{
+      ["presetSelectBtn","presetName","presetSave","presetDelete"].forEach(id=>{
         const el = $(id);
         el.disabled = true;
         el.setAttribute("data-tip", "Presets aren't available — this browser isn't persisting storage for local files (file://). Works reliably on the deployed site instead of a downloaded copy.");
