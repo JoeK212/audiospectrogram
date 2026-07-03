@@ -11,6 +11,18 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.12 — presets weren't showing after saving because localStorage on
+          file:// pages (i.e. every locally re-downloaded copy of this
+          app, rather than the deployed site) can silently no-op writes
+          without throwing an exception — savePresetStore() was trusting
+          "didn't throw" as proof the save worked, which isn't true in
+          that environment. Now verifies every write by reading it
+          straight back, and runs a self-test at startup that disables
+          the whole presets section (with an explanatory tooltip) if
+          storage genuinely isn't persisting, instead of letting someone
+          save a preset that quietly vanishes. Verified against three
+          simulated localStorage behaviors (working, silent no-op,
+          throwing) before shipping.
   v1.11 — STL bottom face collapsed to a single flat quad instead of one
           triangle pair per grid cell. The bottom is perfectly flat
           everywhere, so subdividing it at the top surface's resolution
@@ -362,7 +374,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.11 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.12 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -389,11 +401,11 @@
 
     <div class="section-label">presets</div>
     <div class="presetRow" data-tip="Saved presets are stored in this browser only (localStorage) — nothing leaves your machine.">
-      <select id="presetSelect"><option value="">— select —</option></select>
+      <select id="presetSelect" data-tip="Pick a saved preset to load it."><option value="">— select —</option></select>
       <button type="button" class="btn ghost presetBtn" id="presetDelete" data-tip="Delete the selected preset.">&times;</button>
     </div>
     <div class="presetSaveRow">
-      <input type="text" id="presetName" placeholder="preset name" maxlength="40">
+      <input type="text" id="presetName" placeholder="preset name" maxlength="40" data-tip="Name this preset before saving.">
       <button type="button" class="btn ghost presetBtn" id="presetSave" data-tip="Save every current board/carve/tooling/motion value under this name, so you can snap back to it later.">save</button>
     </div>
 
@@ -503,7 +515,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.11";
+  const APP_VERSION = "1.12";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -703,7 +715,16 @@
 
   function savePresetStore(store){
     try{
-      localStorage.setItem(PRESET_KEY, JSON.stringify(store));
+      const json = JSON.stringify(store);
+      localStorage.setItem(PRESET_KEY, json);
+      // Some browsers let setItem() on a file:// page return normally
+      // without actually persisting anything — no exception, just a
+      // silent no-op. Reading it straight back catches that case instead
+      // of trusting "didn't throw" as proof it worked.
+      if(localStorage.getItem(PRESET_KEY) !== json){
+        log("preset didn't save — this browser isn't persisting storage for local files (file://). Presets work reliably on the deployed site (see the credit link in the header) since that's a stable origin, unlike a freshly re-downloaded file each time.", "warn");
+        return false;
+      }
       return true;
     } catch(err){
       log("couldn't save preset — browser storage may be full or disabled (" + err.message + ")", "warn");
@@ -777,6 +798,26 @@
     log("deleted preset \"" + name + "\"", "ok");
   });
 
+  // Self-test at startup rather than waiting for a save to silently fail —
+  // file:// pages are the main case where this trips (see savePresetStore),
+  // and it's better to visibly disable the feature than let someone save
+  // a preset that quietly never persists.
+  (function checkPresetStorageAvailable(){
+    try{
+      const testKey = PRESET_KEY + ".selftest";
+      localStorage.setItem(testKey, "1");
+      const ok = localStorage.getItem(testKey) === "1";
+      localStorage.removeItem(testKey);
+      if(!ok) throw new Error("write didn't verify");
+    } catch(err){
+      ["presetSelect","presetName","presetSave","presetDelete"].forEach(id=>{
+        const el = $(id);
+        el.disabled = true;
+        el.setAttribute("data-tip", "Presets aren't available — this browser isn't persisting storage for local files (file://). Works reliably on the deployed site instead of a downloaded copy.");
+      });
+      log("presets unavailable in this browser/context (file:// storage isn't persisting) — try the deployed site instead", "warn");
+    }
+  })();
   refreshPresetSelect();
 
   $("invert").addEventListener("change", ()=>{ if(heightmap) requestRebuild(); });
