@@ -11,6 +11,17 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.16 — systematic audit of the v1.15 custom dropdown rewrite. Found
+          and fixed a stray extra closing brace left over from
+          restructuring the "My presets" section (caught by manual
+          review, not the audit script — worth being honest that the
+          checker doesn't do full AST parsing). Also found
+          .customSelectEmpty was dead CSS — defined but never applied
+          anywhere — so wired it up properly: the "My presets" group
+          now always renders and shows "none saved yet" when empty,
+          instead of just not existing. Swept for duplicate function
+          declarations, double-bound listeners, and leftover native-
+          select artifacts from the v1.15 rewrite — all clean.
   v1.15 — replaced the native <select> preset dropdown with a custom
           div-based listbox. The v1.14 fix made option text legible but
           the popup itself was still the OS/browser-rendered native
@@ -435,7 +446,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.15 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.16 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -579,7 +590,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.15";
+  const APP_VERSION = "1.16";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -870,14 +881,19 @@
     });
 
     const userNames = Object.keys(store).sort((a,b)=>a.localeCompare(b));
+    const userGroup = document.createElement("div");
+    userGroup.className = "customSelectGroup";
+    userGroup.textContent = "My presets";
+    menu.appendChild(userGroup);
     if(userNames.length){
-      const userGroup = document.createElement("div");
-      userGroup.className = "customSelectGroup";
-      userGroup.textContent = "My presets";
-      menu.appendChild(userGroup);
       userNames.forEach(name=>{
         addOption(name, name);
       });
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "customSelectEmpty";
+      empty.textContent = "none saved yet — name one below and hit save";
+      menu.appendChild(empty);
     }
 
     if(selectName){
