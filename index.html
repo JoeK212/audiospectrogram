@@ -11,6 +11,22 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.24 — fixed numeric fields silently clamping instead of accepting
+          typed values, reported as "I enter 1 or any value, it returns
+          0.787" on max depth in inches mode. Root cause: max depth's
+          range is 1-20mm (mm always, regardless of display unit), and
+          typing "1" while in inches mode means 1 inch = 25.4mm, which
+          exceeds the 20mm ceiling — so it silently substituted 20mm
+          (=0.787in) with zero indication a limit was hit at all. Every
+          value above the max looked identical to "my input is being
+          ignored." Now logs a clear warning ("max depth clamped to
+          0.787in (allowed range 0.039–0.787in)") whenever a typed value
+          actually gets clamped, for every numeric field, not just max
+          depth. Added labels to fieldDefs for these messages. Verified
+          against the exact reported scenario (max depth, inches, typing
+          "1") plus two more: an in-range value that should NOT trigger
+          a clamp message, and a too-low value clamping to the minimum
+          with its own correct message.
   v1.23 — STFT analysis moved to a Web Worker, off the main thread. A
           140MB FLAC test confirmed the real cost this session flagged:
           the synchronous frame-by-frame FFT loop froze the tab for
@@ -619,7 +635,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.23 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.24 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -785,7 +801,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.23";
+  const APP_VERSION = "1.24";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -914,17 +930,17 @@
   let unitSystem = "mm"; // 'mm' | 'in'
 
   const fieldDefs = [
-    {id:"bw",     key:"boardW",    kind:"length", dm:0, di:2},
-    {id:"bh",     key:"boardH",    kind:"length", dm:0, di:2},
-    {id:"depth",  key:"maxDepth",  kind:"length", dm:1, di:3},
-    {id:"maxfreq",key:"maxFreq",   kind:"plain",  dm:0, di:0},
-    {id:"fbit",   key:"finishBit", kind:"length", dm:1, di:3},
-    {id:"rbit",   key:"roughBit",  kind:"length", dm:1, di:3},
-    {id:"allow",  key:"allowance", kind:"length", dm:2, di:3},
-    {id:"stepdown", key:"stepdown", kind:"length", dm:1, di:3},
-    {id:"feed",   key:"feed",      kind:"speed",  dm:0, di:2},
-    {id:"plunge", key:"plunge",    kind:"speed",  dm:0, di:2},
-    {id:"safez",  key:"safeZ",     kind:"length", dm:1, di:3},
+    {id:"bw",     key:"boardW",    kind:"length", dm:0, di:2, label:"length"},
+    {id:"bh",     key:"boardH",    kind:"length", dm:0, di:2, label:"width"},
+    {id:"depth",  key:"maxDepth",  kind:"length", dm:1, di:3, label:"max depth"},
+    {id:"maxfreq",key:"maxFreq",   kind:"plain",  dm:0, di:0, label:"max frequency"},
+    {id:"fbit",   key:"finishBit", kind:"length", dm:1, di:3, label:"finish bit"},
+    {id:"rbit",   key:"roughBit",  kind:"length", dm:1, di:3, label:"rough bit"},
+    {id:"allow",  key:"allowance", kind:"length", dm:2, di:3, label:"finish allowance"},
+    {id:"stepdown", key:"stepdown", kind:"length", dm:1, di:3, label:"rough stepdown"},
+    {id:"feed",   key:"feed",      kind:"speed",  dm:0, di:2, label:"feed rate"},
+    {id:"plunge", key:"plunge",    kind:"speed",  dm:0, di:2, label:"plunge rate"},
+    {id:"safez",  key:"safeZ",     kind:"length", dm:1, di:3, label:"safe Z"},
   ];
 
   function mmToDisplay(mmVal, kind){ return (unitSystem==="mm"||kind==="plain") ? mmVal : mmVal/MM_PER_IN; }
@@ -952,7 +968,20 @@
       const v = parseFloat(num.value);
       if(isNaN(v)){ refreshDisplay(); return; }
       const min = parseFloat(range.min), max = parseFloat(range.max);
-      const mmVal = Math.min(max, Math.max(min, displayToMm(v, def.kind)));
+      const rawMm = displayToMm(v, def.kind);
+      const mmVal = Math.min(max, Math.max(min, rawMm));
+      // Silently substituting the clamped value (old behavior) looked
+      // exactly like the input being ignored/reverted — e.g. typing "1"
+      // (meaning 1 inch = 25.4mm) against max depth's 1-20mm range
+      // clamped to 20mm (0.787in) with zero indication that a limit was
+      // hit at all. Now it says so.
+      if(Math.abs(rawMm - mmVal) > 1e-6){
+        const lo = mmToDisplay(min, def.kind), hi = mmToDisplay(max, def.kind);
+        const dec = (unitSystem==="mm"||def.kind==="plain") ? def.dm : def.di;
+        const fmt = x => dec>0 ? x.toFixed(dec) : Math.round(x);
+        log((def.label||def.key) + " clamped to " + fmt(mmToDisplay(mmVal, def.kind)) + unitLabel(def.kind)
+          + " (allowed range " + fmt(lo) + "\u2013" + fmt(hi) + unitLabel(def.kind) + ")", "warn");
+      }
       params[def.key] = mmVal;
       range.value = mmVal;
       refreshDisplay();
