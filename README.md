@@ -5,7 +5,7 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.8 — full changelog is a comment block at the top of
+**Version:** v1.10 — full changelog is a comment block at the top of
 `index.html` (source of truth if this file drifts out of date).
 
 ## Pipeline
@@ -16,10 +16,12 @@ X, frequency → Y, loudness → Z depth. Board always stored in mm; G-code
 always exports mm (`G21`) regardless of the display unit toggle.
 
 Viewport has a nav toolbar (Home/Top/Front/Right, machine-origin
-marker, section push/pull to check carve depth) and playback with a
-synced marker tracing the relief in time with the sound. Presets
-(save/load/delete, named, stored in this browser only) capture every
-tunable value so you can snap back to a known-good setup.
+marker, a section cut you push/pull along X with a red profile trace at
+the cut, and an X-ray toggle that ghosts the stock plus a wireframe of
+the true board envelope) and playback (Play/Stop) with a synced marker
+tracing the relief in time with the sound. Presets (save/load/delete,
+named, stored in this browser only) capture every tunable value so you
+can snap back to a known-good setup.
 
 ## Files
 

@@ -11,6 +11,21 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.10 — added a Stop button next to Play. stopPlayback() already existed
+          internally (used when a clip finishes or a new file loads) but
+          had no button wired to it, so pausing was the only way to stop
+          and there was no way to reset back to the start. Stop now does
+          both: halts the audio node and resets the playhead to 0:00.
+  v1.9  — UI ironing-out pass, using Modulor Massing's left panel as a
+          reference: header restructured to a title+subtitle stack
+          (matches Modulor's convention) instead of split left/right;
+          section-label dividers get a bottom rule; Simple/Advanced
+          switched from a filled segmented control to underline tabs
+          (mm/in kept boxed — it's a real setting, not a view switch);
+          every field/toggle with a tooltip now shows a small "?" badge
+          for discoverability, generated once from existing [data-tip]
+          attributes rather than hand-added to all 12 field blocks (so
+          it can't drift if a tooltip is added/removed later).
   v1.8  — preset save/load (name it, save it, pick it from a dropdown
           later, delete when done). Stored in localStorage, this browser
           only — matches the app's "nothing leaves your machine" ethos,
@@ -110,17 +125,17 @@
   *{ box-sizing: border-box; }
   html,body{ height:100%; margin:0; background:var(--black); color:var(--ink); font-family: var(--sans); }
 
-  .app{ display:grid; grid-template-columns: 340px 1fr; grid-template-rows: 56px 1fr 40px; height:100vh; }
+  .app{ display:grid; grid-template-columns: 340px 1fr; grid-template-rows: 64px 1fr 40px; height:100vh; }
 
   header{
     grid-column: 1 / 3; grid-row: 1;
     display:flex; align-items:center; justify-content:space-between;
     padding: 0 20px; border-bottom: 1px solid var(--line);
   }
+  header .titleBlock{ display:flex; flex-direction:column; gap:3px; }
   header .wordmark{ font-family: var(--serif); font-style: italic; font-size: 19px; letter-spacing: 0.02em; }
   header .wordmark b{ font-style: normal; color: var(--accent); font-weight:400; }
-  header .meta{ display:flex; align-items:baseline; gap:16px; }
-  header .tag{ font-family: var(--mono); font-size: 10px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.12em; }
+  header .tag{ font-family: var(--mono); font-size: 10px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.1em; }
   header .credit{ font-family: var(--mono); font-size: 10px; color: var(--accent-dim); letter-spacing: 0.06em; }
   header .credit a{ color: inherit; text-decoration: none; border-bottom: 1px solid var(--line); }
   header .credit a:hover{ color: var(--accent); border-color: var(--accent); }
@@ -152,10 +167,17 @@
   .section-label{
     font-family: var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.12em;
     color: var(--ink-dim); margin: 22px 0 10px; display:flex; justify-content:space-between; align-items:center;
+    border-bottom:1px solid var(--line); padding-bottom:7px;
   }
   .field{ margin-bottom:12px; }
   .field label{ display:flex; justify-content:space-between; font-size:11.5px; color: var(--ink-dim); margin-bottom:5px; font-family: var(--mono); }
   .field label span.val{ color: var(--accent); }
+  .labelText{ display:inline-flex; align-items:center; gap:6px; }
+  .tipIcon{
+    display:inline-flex; align-items:center; justify-content:center; width:12px; height:12px;
+    border:1px solid var(--ink-dim); border-radius:50%; font-size:8.5px; color:var(--ink-dim);
+    flex-shrink:0; cursor:help;
+  }
   .field input[type=range]{
     -webkit-appearance:none; -moz-appearance:none; appearance:none; width:100%; height:1px; background: var(--line); outline:none;
   }
@@ -211,6 +233,11 @@
   .playTools .navBtn{ border-right:none; min-width:52px; }
   .playTools .navBtn.active{ background:var(--accent); color:var(--black); }
   .playTime{ font-family:var(--mono); font-size:10px; color:var(--ink-dim); padding-right:11px; min-width:64px; }
+  .xrayInfo{
+    position:absolute; top:64px; right:16px; z-index:5; font-family:var(--mono); font-size:10px;
+    color:var(--accent); background: rgba(10,10,10,0.7); border:1px solid var(--line); padding:7px 11px;
+    letter-spacing:.04em;
+  }
   .navBtn{
     background:transparent; border:none; border-right:1px solid var(--line); color:var(--ink-dim);
     font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em;
@@ -284,6 +311,13 @@
   .tabBtn.active{ background:var(--accent); color:var(--black); }
   .tabBtn:not(.active):hover{ color:var(--accent); }
 
+  /* Simple/Advanced: underline tabs, not a filled segmented control — this
+     is a view-mode switch (like Modulor Massing's tab convention), distinct
+     from mm/in which is a real binary setting and keeps the boxed style. */
+  #modeTabs{ border:none; gap:18px; }
+  #modeTabs .tabBtn{ border:none !important; padding:0 0 7px; border-bottom:2px solid transparent; }
+  #modeTabs .tabBtn.active{ background:transparent; color:var(--ink); border-bottom-color:var(--accent); }
+
   .presetRow, .presetSaveRow{ display:flex; gap:6px; margin-bottom:8px; }
   .presetRow select, .presetSaveRow input[type=text]{
     flex:1; min-width:0; background:transparent; border:1px solid var(--line); color:var(--ink);
@@ -314,11 +348,11 @@
 <body>
 <div class="app">
   <header>
-    <div class="wordmark">sound <b>/</b> relief</div>
-    <div class="meta">
+    <div class="titleBlock">
+      <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
-      <div class="credit" id="versionTag">v1.8 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
     </div>
+    <div class="credit" id="versionTag">v1.10 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -417,6 +451,7 @@
     <div class="hint">drag to orbit &middot; scroll to zoom</div>
     <div class="playTools" id="playTools">
       <button type="button" class="navBtn" id="navPlay" disabled data-tip="Play the sound while a marker traces the carved profile across the board in sync.">play</button>
+      <button type="button" class="navBtn" id="navStop" disabled data-tip="Stop playback and reset the playhead to the start.">stop</button>
       <span class="playTime" id="playTime"></span>
     </div>
     <div class="navTools" id="navTools">
@@ -426,8 +461,10 @@
       <button type="button" class="navBtn" id="navRight" data-tip="Look along the frequency axis, board side-on.">right</button>
       <span class="navDivider"></span>
       <button type="button" class="navBtn" id="navOrigin" data-tip="Show or hide the machine 0,0 marker (matches the G-code/STL origin).">0,0</button>
-      <button type="button" class="navBtn" id="navSection" data-tip="Push/pull a section cut through the board to check the actual carve depth at any point.">section</button>
+      <button type="button" class="navBtn" id="navSection" data-tip="Cut the board along X to see the actual carve depth at any position, with a red profile trace at the cut.">section</button>
+      <button type="button" class="navBtn" id="navXray" data-tip="Ghost the stock material so you can see straight through to the actual carved surface underneath, plus a wireframe of the full board envelope.">x-ray</button>
     </div>
+    <div class="xrayInfo" id="xrayInfo" style="display:none;"></div>
     <div class="sectionBar" id="sectionBar" style="display:none;">
       <span class="sectionLabel">section X <b id="sectionVal">0</b>mm</span>
       <input type="range" id="sectionSlider" min="0" max="1000" step="1" value="0">
@@ -456,7 +493,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.8";
+  const APP_VERSION = "1.10";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -464,7 +501,8 @@
   let dragging = false, lastX=0, lastY=0;
   let autoRotate = true;
   let originGroup = null, originVisible = true;
-  let sectionPlane = null, sectionEnabled = false, sectionPos = 0, sectionFlipped = false;
+  let sectionEnabled = false, sectionPos = 0, sectionFlipped = false;
+  let xrayEnabled = false, boardWireframe = null;
   let sectionLine = null;
   let audioCtx = null, playSourceNode = null, isPlaying = false, playStartCtxTime = 0, playPausedAt = 0, playheadLine = null;
   // Visual depth exaggeration shared by buildMesh (the relief surface) and
@@ -554,6 +592,28 @@
     });
     window.addEventListener("scroll", hideTip, true);
     window.addEventListener("resize", hideTip);
+
+    // Small "?" badge on every field/toggle label that has a tooltip — the
+    // whole row is already hoverable for the tip, but nothing signaled that
+    // visually. One pass over existing [data-tip] wrappers rather than
+    // hand-adding a span to every field block, so it can't drift out of
+    // sync if a field's tooltip is added/removed later.
+    // Wraps the label's own text node (not just prepends the icon) because
+    // .field label is itself flex+space-between between the label text and
+    // the value input — prepending a bare icon would turn that 2-item flex
+    // row into 3 items and break the alignment.
+    document.querySelectorAll(".field[data-tip] > label, .toggle[data-tip] > label").forEach(label=>{
+      const textNode = label.firstChild;
+      if(!textNode || textNode.nodeType !== 3) return;
+      const wrap = document.createElement("span");
+      wrap.className = "labelText";
+      const icon = document.createElement("span");
+      icon.className = "tipIcon";
+      icon.textContent = "?";
+      wrap.appendChild(icon);
+      wrap.appendChild(document.createTextNode(textNode.textContent));
+      label.replaceChild(wrap, textNode);
+    });
   })();
 
   // ---------- param bindings (unit-aware, editable) ----------
@@ -886,6 +946,7 @@
     $("downloadStlBtn").disabled = false;
     $("recomputeBtn").disabled = false;
     $("navPlay").disabled = false;
+    $("navStop").disabled = false;
     $("emptyState").style.display = "none";
   }
 
@@ -1075,13 +1136,33 @@
   // sectionPos is tracked in G-code/STL mm (0..boardW) so the readout means
   // the same thing it means everywhere else in this app; it's converted to
   // world X (which is centered on the board) only for the THREE.Plane.
+  let sectionPosInitialized = false; // tracks whether sectionPos has ever been given a real value
+  let sectionPlane = null;
+
   function updateSectionClipping(){
     if(!mesh) return;
+    // Single clip plane: keeps everything on one side of the cut, removes
+    // the other. This was briefly changed to a two-plane "isolate a thin
+    // slice" version, but that made the default view (cut at the very
+    // edge) look like almost nothing was visible — worse, not better.
+    // Reverted to match the known-good reference: most of the board stays
+    // visible, only the sliver beyond the cut is removed, and starting
+    // the cut at X=0 (the origin) means there's really nothing to clip
+    // away yet on load — that's expected, not broken.
+    if(!sectionPosInitialized){
+      sectionPos = 0;
+      sectionPosInitialized = true;
+    } else {
+      sectionPos = Math.max(0, Math.min(params.boardW, sectionPos)); // stay in range if the board was resized
+    }
+    const slider = $("sectionSlider");
+    if(slider){ slider.max = String(Math.round(params.boardW)); slider.value = String(Math.round(sectionPos)); }
+
     const worldX = sectionPos - params.boardW/2;
     const normal = sectionFlipped ? -1 : 1;
     if(!sectionPlane) sectionPlane = new THREE.Plane(new THREE.Vector3(normal,0,0), 0);
     else sectionPlane.normal.set(normal,0,0);
-    sectionPlane.constant = -normal * worldX;
+    sectionPlane.constant = -normal * worldX; // keep normal·point + constant >= 0, i.e. the `normal` side of worldX
     const planes = sectionEnabled ? [sectionPlane] : [];
     mesh.material.clippingPlanes = planes;
     const slab = scene && scene.getObjectByName("slab");
@@ -1093,21 +1174,24 @@
     updateSectionLine(worldX);
   }
 
-  // Red outline marking exactly where the section plane cuts, so the cut
+  // Red trace marking exactly where the section plane cuts, so the cut
   // isn't just implied by the exposed face — it's easy to lose track of
   // which line on the board the depth reading actually corresponds to.
-  // The top edge traces the real carved profile at that column (same
-  // vertex math buildMesh uses: freqRow flip, invert, exaggeration) so
-  // the line reads as "this is the depth here", not just a bounding box.
-  // Sides/bottom are sized off the same slab math as buildMesh (via
-  // PREVIEW_EXAGGERATION) so the outline always brackets the full slab.
+  // Traces the real carved profile at that column (same vertex math
+  // buildMesh uses: freqRow flip, invert, exaggeration) so the line reads
+  // as "this is the depth here", not just an abstract marker.
+  //
+  // Closed loop (bottom cap + side verticals framing the profile), not
+  // just an open trace — reverted back to this after the open-trace
+  // version turned out harder to read against the (now much larger,
+  // single-plane) visible remainder of the board.
   //
   // Built as a tube mesh, not a THREE.Line — most WebGL implementations
   // ignore LineBasicMaterial.linewidth entirely (a driver limitation, not
   // a three.js bug), so a plain Line stays hairline-thin no matter what
   // width you ask for. A tube has real geometry and reads as bold at any
-  // zoom. It's also nudged off the cut face into the open/removed side so
-  // it sits visibly proud of the surface instead of z-fighting with it.
+  // zoom. It's also nudged off the cut face into the removed side so it
+  // sits visibly proud of the surface instead of z-fighting with it.
   //
   // computeColumnProfile() is shared with the playback playhead below —
   // one column-index-to-depth-profile calculation, not two copies that
@@ -1139,10 +1223,11 @@
 
     const ix = Math.max(0, Math.min(cols-1, Math.round((sectionPos/boardW) * (cols-1))));
     const profile = computeColumnProfile(ix);
+    if(profile.length < 2) return;
 
     const radius = Math.max(1.1, Math.min(boardW, boardH) * 0.009);
     const normal = sectionFlipped ? -1 : 1;
-    const punchX = worldX - normal * radius * 1.8; // pop out toward the open/removed side
+    const punchX = worldX - normal * radius * 1.8; // pop out toward the removed side
 
     const pts = [ new THREE.Vector3(punchX, bottom, -halfH) ];
     for(const [wy, wz] of profile) pts.push(new THREE.Vector3(punchX, wy, wz));
@@ -1252,13 +1337,54 @@
     sectionEnabled = !sectionEnabled;
     $("navSection").classList.toggle("active", sectionEnabled);
     $("sectionBar").style.display = sectionEnabled ? "flex" : "none";
-    if(sectionEnabled && mesh){
-      const slider = $("sectionSlider");
-      slider.max = String(Math.round(params.boardW));
-      if(sectionPos === 0) sectionPos = params.boardW/2;
-      slider.value = String(Math.round(sectionPos));
+    updateSectionClipping(); // handles sectionPos defaulting/clamping and slider sync itself
+    // No forced camera reframing here — that was only needed for the
+    // two-plane thin-slice version, where 95%+ of the board vanished and
+    // the default 3/4 view read as a confusing sliver. Single-plane
+    // clipping keeps most of the board visible, so the normal view (same
+    // one the user was already looking at) still makes sense untouched.
+  }
+
+  // ---------- x-ray: ghost the stock + show the real board envelope ----------
+  // Deliberately NOT clipping-plane based — this only ever touches material
+  // opacity and a bounding-box wireframe, neither of which has a "position"
+  // that can be wrong the way a clip plane's can. If this doesn't render
+  // correctly, the bug is in the renderer/materials generally, not in a
+  // piece of state this feature introduced.
+  function toggleXray(){
+    xrayEnabled = !xrayEnabled;
+    $("navXray").classList.toggle("active", xrayEnabled);
+    applyXray();
+  }
+
+  function applyXray(){
+    if(!scene) return;
+    const slab = scene.getObjectByName("slab");
+    if(slab){
+      slab.material.transparent = xrayEnabled;
+      slab.material.opacity = xrayEnabled ? 0.15 : 1;
+      slab.material.depthWrite = !xrayEnabled; // avoid transparent-sort artifacts hiding the relief inside
+      slab.material.needsUpdate = true;
     }
-    updateSectionClipping();
+    updateBoardWireframe();
+    const info = $("xrayInfo");
+    if(xrayEnabled && heightmap){
+      info.style.display = "block";
+      info.textContent = "board " + params.boardW.toFixed(0) + " \u00d7 " + params.boardH.toFixed(0)
+        + " \u00d7 " + params.maxDepth.toFixed(1) + "mm (L\u00d7W\u00d7depth)";
+    } else {
+      info.style.display = "none";
+    }
+  }
+
+  function updateBoardWireframe(){
+    if(!scene) return;
+    if(boardWireframe){ scene.remove(boardWireframe); boardWireframe.geometry.dispose(); boardWireframe.material.dispose(); boardWireframe = null; }
+    if(!xrayEnabled) return;
+    const slab = scene.getObjectByName("slab");
+    if(!slab) return;
+    boardWireframe = new THREE.BoxHelper(slab, 0xe8d5a3);
+    scene.add(boardWireframe);
   }
 
   function colorFor(h){
@@ -1340,6 +1466,7 @@
 
     updateOriginMarker();
     updateSectionClipping();
+    applyXray();
   }
 
   // ---------- G-code generation ----------
@@ -1559,6 +1686,7 @@
 
   // ---------- navigation toolbar wiring ----------
   $("navPlay").addEventListener("click", togglePlay);
+  $("navStop").addEventListener("click", stopPlayback);
   $("navHome").addEventListener("click", ()=> setView("home"));
   $("navTop").addEventListener("click", ()=> setView("top"));
   $("navFront").addEventListener("click", ()=> setView("front"));
@@ -1566,6 +1694,7 @@
   $("navOrigin").addEventListener("click", toggleOrigin);
   $("navOrigin").classList.add("active");
   $("navSection").addEventListener("click", toggleSection);
+  $("navXray").addEventListener("click", toggleXray);
   $("sectionFlip").addEventListener("click", ()=>{ sectionFlipped = !sectionFlipped; updateSectionClipping(); });
   $("sectionSlider").addEventListener("input", (e)=>{
     sectionPos = Number(e.target.value);
