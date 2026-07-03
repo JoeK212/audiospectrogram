@@ -11,6 +11,32 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.21 — board length is now a function of trim duration, not a fixed
+          independent value. v1.19/v1.20 always stretched the trimmed
+          window to fill the full board length regardless of how short
+          the clip was; a real 4.3-6.3s trim of the user's own testing
+          made clear that's not what "isolate an area of the track"
+          means — it means CROP, not stretch: a 2s clip out of a 6.3s
+          file at a 250mm baseline should become a ~79mm board, sized
+          and positioned proportionally, not a 250mm board with 2
+          seconds of audio stretched across all of it.
+          mmPerSecond is the single source of truth for the scale —
+          established once per file (length field's value ÷ full
+          duration), reapplied on every trim change (new effective
+          length = mmPerSecond × trim duration), and recalibrated if the
+          length field is edited directly (so a manual edit always means
+          "this many mm for THIS trim", not something that gets silently
+          overwritten next trim change). Loading a preset with audio
+          already present resets trim to full and recalibrates from the
+          preset's own length — otherwise a stale partial trim would
+          immediately fight the preset's intended board size. Guards
+          against the length slider's native min clamping a very short
+          trim's computed length to the wrong value (widens the floor
+          rather than let it clamp silently). Verified the full mechanism
+          standalone against the user's own numbers (250mm/6.3s baseline,
+          4.3-6.3s trim → 79.37mm, matching their own worked example
+          exactly) plus reset-to-full exactness, a very short trim edge
+          case, and manual-edit recalibration — all before shipping.
   v1.20 — playback now previews the trim selection, not the whole file.
           v1.19 shipped trim as independent of Play/Stop/seek on
           purpose, but that meant pressing Play always played the full
@@ -548,7 +574,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.20 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.21 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -588,7 +614,7 @@
 
     <div class="section-label">board</div>
     <div class="row2">
-      <div class="field" data-tip="Length of the material blank — the time axis of the recording is stretched across this dimension.">
+      <div class="field" data-tip="Length of the material blank at the full track. Trimming shrinks this proportionally — a 2s clip out of a 60s track becomes ~1/30th this length, not stretched to fill it. Editing this value recalibrates the scale for the current trim.">
         <label>length <span class="valWrap"><input type="number" class="valInput" id="n_bw" step="1"><span class="unitSuffix" id="u_bw">mm</span></span></label>
         <input type="range" id="bw" min="60" max="600" step="5" value="250" data-kind="length"></div>
       <div class="field" data-tip="Width of the material blank — the frequency axis of the recording runs along this dimension.">
@@ -659,7 +685,7 @@
         <input type="range" id="playSeek" min="0" max="0" step="0.1" value="0" disabled data-tip="Drag to jump anywhere within the trimmed selection.">
         <button type="button" class="navBtn" id="navSeekFwd" disabled data-tip="Forward 5 seconds.">5&raquo;</button>
       </div>
-      <div class="trimRow" data-tip="Only this window of the track feeds the relief and G-code — the rest of the file is ignored. Play/Stop/seek above also preview just this window, so what you hear matches what gets carved.">
+      <div class="trimRow" data-tip="Only this window of the track feeds the relief and G-code. Board length shrinks/grows proportionally to match — the full length in the BOARD section represents the whole track; trimming to a shorter window carves a proportionally shorter board, not a stretched full-length one. Play/Stop/seek preview exactly this window too.">
         <div class="trimBar" id="trimBar">
           <div class="trimTrack"></div>
           <div class="trimRange" id="trimRange"></div>
@@ -672,7 +698,7 @@
         <span>&ndash;</span>
         <input type="number" class="trimNumInput" id="trimEndInput" step="0.1" min="0" disabled>
         <span class="trimUnit">s</span>
-        <button type="button" class="navBtn" id="trimReset" disabled data-tip="Reset to the full track.">full</button>
+        <button type="button" class="navBtn" id="trimReset" disabled data-tip="Reset the trim range back to the full track.">reset</button>
       </div>
     </div>
     <div class="navTools" id="navTools">
@@ -714,7 +740,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.20";
+  const APP_VERSION = "1.21";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -895,6 +921,18 @@
   const boundFields = fieldDefs.map(bindField);
   function refreshAllDisplays(){ boundFields.forEach(f => f._refresh()); }
 
+  // Editing the length field directly recalibrates mmPerSecond rather than
+  // just resizing the current trim's output — otherwise a manual edit
+  // would get silently overwritten the next time trim changes. Runs after
+  // bindField's own listeners (registered above) have already updated
+  // params.boardW, so this reads the final new value.
+  function recalibrateScaleFromBoardWEdit(){
+    if(boardWProgrammaticUpdate || !heightmap) return;
+    mmPerSecond = params.boardW / currentTrimDuration();
+  }
+  $("bw").addEventListener("change", recalibrateScaleFromBoardWEdit);
+  $("n_bw").addEventListener("change", recalibrateScaleFromBoardWEdit);
+
   // ---------- presets (save/load/delete, localStorage-only) ----------
   // Stores raw mm-space values — the same domain params[] and the range
   // inputs already operate in regardless of the mm/in display toggle — so
@@ -1048,7 +1086,18 @@
     } else {
       refreshAllDisplays();
     }
-    if(heightmap) requestRebuild();
+    if(heightmap){
+      // The preset's boardW becomes the new full-track baseline — keeping
+      // a stale partial trim around would immediately shrink it again on
+      // the next trim-driven update, silently fighting the preset's own
+      // value. Fresh preset, fresh trim.
+      if(isPlaying) stopPlayback();
+      trimStart = 0; trimEnd = audioDuration;
+      establishScale();
+      updateTrimUI();
+      syncSeekBounds();
+      requestRebuild();
+    }
   }
 
   function handlePresetSelected(raw){
@@ -1206,6 +1255,43 @@
   // per-file in decodeAndAnalyze.
   let trimStart = 0, trimEnd = 0;
 
+  // v1.21 — board length is a function of trim duration, not a fixed
+  // independent value. mmPerSecond is the single source of truth for the
+  // audio-to-mm scale: (length field value) ÷ (current trim duration).
+  // Established once per file (using whatever length is set at full-trim
+  // as the baseline), then reapplied whenever trim changes so the board
+  // always shrinks/grows to exactly the proportional slice — e.g. a 2s
+  // clip out of a 6.3s file at a 250mm baseline becomes ~79mm, not
+  // stretched to fill 250mm. Recalibrated if the user directly edits the
+  // length field (see the bw/n_bw listeners below fieldDefs), so typing a
+  // new length always means "this many mm for THIS trim selection."
+  let mmPerSecond = 0;
+  let boardWProgrammaticUpdate = false; // guards against a trim-driven length update recalibrating the scale
+
+  function establishScale(){
+    mmPerSecond = audioDuration > 0 ? params.boardW / audioDuration : 0;
+  }
+
+  function currentTrimDuration(){
+    return Math.max(0.01, trimEnd - trimStart);
+  }
+
+  function applyTrimToBoardLength(){
+    if(mmPerSecond <= 0) return;
+    let effectiveBoardW = mmPerSecond * currentTrimDuration();
+    const range = $("bw");
+    // Very short trims can compute a length below the slider's own min —
+    // widen the floor rather than let the native range input silently
+    // clamp the value to something wrong. Never raises the min back up.
+    const curMin = parseFloat(range.min);
+    if(effectiveBoardW < curMin) range.min = String(Math.max(1, effectiveBoardW));
+    boardWProgrammaticUpdate = true;
+    params.boardW = effectiveBoardW;
+    range.value = effectiveBoardW;
+    refreshAllDisplays();
+    boardWProgrammaticUpdate = false;
+  }
+
   function decodeAndAnalyze(file){
     if(isPlaying || playSourceNode) stopPlayback();
     setStatus("decoding");
@@ -1313,6 +1399,7 @@
     log(nFramesRaw + " frames x " + nBins + " freq bins analyzed", "ok");
     trimStart = 0; trimEnd = audioDuration; // full track by default — must be set before the first build below
     playPausedAt = trimStart;
+    establishScale(); // whatever length is currently set becomes the full-track baseline for this file
     buildHeightmapFromCache();
     $("downloadBtn").disabled = false;
     $("downloadStlBtn").disabled = false;
@@ -1836,6 +1923,7 @@
   // leaving playback pointing somewhere the selection no longer covers.
   function applyTrimChange(){
     syncSeekBounds();
+    applyTrimToBoardLength(); // shrinks/grows the board length to match this trim's proportional slice
     const pos = currentPlaybackTime();
     if(pos < trimStart || pos > trimEnd){
       if(isPlaying) stopPlayback();
