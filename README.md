@@ -5,7 +5,7 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.25 — full changelog is a comment block at the top of
+**Version:** v1.26 — full changelog is a comment block at the top of
 `index.html` (source of truth if this file drifts out of date).
 
 ## Pipeline
@@ -30,7 +30,9 @@ proportionally to match (a 2s clip out of a 6.3s file at a 250mm
 baseline becomes ~79mm, not stretched to fill 250mm). Presets
 (save/load/delete,
 named, stored in this browser only) capture every tunable value so you
-can snap back to a known-good setup.
+can snap back to a known-good setup. A "? help" button in the header
+opens a full in-app walkthrough (workflow, every control, tips learned
+from real testing this project) — same "?" pattern already used per-field.
 
 ## Files
 

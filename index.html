@@ -11,6 +11,22 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.26 — in-app Help documentation. A "? help" button (header, top
+          right, same placement pattern as Modulor Massing's HELP
+          button) opens a modal with a full walkthrough: quick start,
+          every Simple/Advanced control, Trim, Playback, Presets
+          (including the file:// storage caveat), Viewport/Navigation
+          (including the ISO 841 axis color convention), Export (G-code
+          vs STL, what each is actually for), and a "tips/limits/things
+          learned the hard way" section drawing directly from this
+          session's real bugs (the clamp-warning behavior, the 3.2x
+          preview exaggeration vs real STL/G-code depth, the Worker-
+          based analysis and what it does/doesn't fix for large files).
+          Built as plain <details>/<summary> accordion sections — no
+          new dependencies, consistent with the rest of the app's
+          hand-rolled, single-file approach. Escape/backdrop-click/×
+          all close it, matching the interaction pattern already
+          established by the presets dropdown.
   v1.25 — swept the codebase for the same bug class fixed in v1.24
           (typed values silently clamped with no feedback) rather than
           treating max depth as an isolated fix. Found one more real
@@ -363,6 +379,60 @@
   header .credit{ font-family: var(--mono); font-size: 10px; color: var(--accent-dim); letter-spacing: 0.06em; }
   header .credit a{ color: inherit; text-decoration: none; border-bottom: 1px solid var(--line); }
   header .credit a:hover{ color: var(--accent); border-color: var(--accent); }
+  .headerRight{ display:flex; align-items:center; gap:16px; }
+  .helpBtn{
+    background:transparent; border:1px solid var(--line); color:var(--ink-dim);
+    font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.1em;
+    padding:6px 12px; cursor:pointer; border-radius:0;
+  }
+  .helpBtn:hover{ color:var(--accent); border-color:var(--accent); }
+
+  .helpModal{ position:fixed; inset:0; z-index:100; display:flex; align-items:center; justify-content:center; }
+  .helpModal[hidden]{ display:none; }
+  .helpBackdrop{ position:absolute; inset:0; background:rgba(6,6,5,0.82); backdrop-filter: blur(3px); }
+  .helpPanel{
+    position:relative; width:min(760px, 92vw); max-height:86vh; display:flex; flex-direction:column;
+    background:var(--black); border:1px solid var(--line); box-shadow:0 20px 60px rgba(0,0,0,0.6);
+  }
+  .helpPanelHeader{
+    display:flex; align-items:center; justify-content:space-between; padding:18px 22px;
+    border-bottom:1px solid var(--line); flex-shrink:0;
+  }
+  .helpPanelHeader .wordmark{ font-family:var(--serif); font-style:italic; font-size:17px; letter-spacing:.02em; }
+  .helpPanelHeader .wordmark b{ font-style:normal; color:var(--accent); font-weight:400; }
+  .helpPanelSub{ font-style:normal; color:var(--ink-dim); font-size:13px; margin-left:2px; }
+  .helpCloseBtn{
+    background:transparent; border:1px solid var(--line); color:var(--ink-dim); width:30px; height:30px;
+    font-size:16px; line-height:1; cursor:pointer; border-radius:0; flex-shrink:0;
+  }
+  .helpCloseBtn:hover{ color:var(--accent); border-color:var(--accent); }
+  .helpContent{ overflow-y:auto; padding:8px 22px 22px; }
+
+  .helpContent details{ border-bottom:1px solid var(--line); padding:14px 0; }
+  .helpContent details:last-child{ border-bottom:none; }
+  .helpContent summary{
+    font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--ink); cursor:pointer; list-style:none; display:flex; align-items:center; gap:8px;
+  }
+  .helpContent summary::-webkit-details-marker{ display:none; }
+  .helpContent summary::before{ content:"\25b8"; color:var(--accent); font-size:10px; transition:transform .15s; }
+  .helpContent details[open] summary::before{ transform:rotate(90deg); }
+  .helpContent summary:hover{ color:var(--accent); }
+
+  .helpContent p, .helpContent ol, .helpContent dl{
+    font-family:var(--mono); font-size:12px; line-height:1.65; color:var(--ink-dim); margin:12px 0 0;
+  }
+  .helpContent p{ max-width:64ch; }
+  .helpContent ol{ padding-left:1.3em; }
+  .helpContent ol li{ margin-bottom:8px; }
+  .helpContent ol li::marker{ color:var(--accent); }
+  .helpContent dt{ color:var(--ink); margin-top:12px; }
+  .helpContent dt:first-child{ margin-top:0; }
+  .helpContent dd{ margin:3px 0 0; max-width:64ch; }
+  .helpContent code{
+    font-family:var(--mono); background:var(--line); color:var(--accent);
+    padding:1px 5px; font-size:11px;
+  }
 
   .panel{
     grid-column: 1; grid-row: 2;
@@ -651,8 +721,114 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.25 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="headerRight">
+      <button type="button" class="helpBtn" id="helpBtn" data-tip="Full walkthrough: workflow, every control, tips from real testing.">? help</button>
+      <div class="credit" id="versionTag">v1.26 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    </div>
   </header>
+
+  <div class="helpModal" id="helpModal" hidden>
+    <div class="helpBackdrop" id="helpBackdrop"></div>
+    <div class="helpPanel" role="dialog" aria-modal="true" aria-label="Help">
+      <div class="helpPanelHeader">
+        <div class="wordmark">sound <b>/</b> relief <span class="helpPanelSub">&mdash; help</span></div>
+        <button type="button" class="helpCloseBtn" id="helpCloseBtn" aria-label="Close help">&times;</button>
+      </div>
+      <div class="helpContent">
+
+        <details open>
+          <summary>Quick start</summary>
+          <ol>
+            <li>Drop an audio file, or click to browse &mdash; wav, mp3, m4a, flac, most things your browser can decode natively.</li>
+            <li>Analysis runs in the background (a Web Worker, so the page won't freeze) &mdash; watch the status readout for progress on longer files.</li>
+            <li>Adjust Length/Width, Max Depth, Max Frequency in Simple mode &mdash; or switch to Advanced for bit sizes, feed rates, and roughing.</li>
+            <li>Optionally trim to a window of the track (see Trim below) &mdash; the board resizes to match that window, it doesn't stretch a short clip to fill a fixed size.</li>
+            <li>Check the 3D preview: orbit, use Section or X-Ray to look inside, hit Play to hear it while a marker traces the relief in sync.</li>
+            <li>Download G-code for the CNC, and/or STL to sanity-check the shape in a slicer or CAM tool first.</li>
+          </ol>
+        </details>
+
+        <details>
+          <summary>Board &amp; carve (Simple mode)</summary>
+          <dl>
+            <dt>Length</dt><dd>Footprint along the time axis &mdash; what the track gets stretched (or, with a trim active, cropped) across.</dd>
+            <dt>Width</dt><dd>Footprint along the frequency axis.</dd>
+            <dt>Max depth</dt><dd>Deepest point of the carve, 1&ndash;20mm (0.04&ndash;0.79in). Type past either end and it clamps to the limit and says why in the log &mdash; it's not ignoring your input, you hit the configured ceiling.</dd>
+            <dt>Max frequency</dt><dd>Audio content above this is ignored entirely. Lower it to focus on bass/mid content; raise it to capture more high-frequency detail (at the cost of the low end taking up proportionally less of the Width).</dd>
+            <dt>Invert (quiet = deep)</dt><dd>Off: quiet stays near the surface (the "peaks"), loud gets cut deep (the "valleys"). On: flips it &mdash; loud becomes the shallow/proud part.</dd>
+          </dl>
+        </details>
+
+        <details>
+          <summary>Advanced mode (tooling &amp; motion)</summary>
+          <dl>
+            <dt>Finish bit / Rough bit</dt><dd>Cutter diameters &mdash; set toolpath stepover spacing.</dd>
+            <dt>Finish allowance</dt><dd>Material deliberately left behind by the roughing pass for the finish pass to clean up.</dd>
+            <dt>Rough stepdown</dt><dd>Max Z removed in a single roughing pass. Real multi-level stepdown CAM: the roughing pass clears bulk material in flat Z-level slices at this increment, not one deep plunge.</dd>
+            <dt>Feed / Plunge</dt><dd>Cutting and plunge feed rates.</dd>
+            <dt>Safe Z</dt><dd>Retract height between cuts.</dd>
+            <dt>Include roughing pass</dt><dd>Toggle off if you're hand-finishing with one bit only.</dd>
+          </dl>
+        </details>
+
+        <details>
+          <summary>Trim</summary>
+          <p>Selects a window of the track to actually carve &mdash; not the whole file stretched to fit, a true crop.</p>
+          <p>Board length scales proportionally: a 2-second clip out of a 60-second file, at a 250mm baseline, becomes ~8mm &mdash; sized and positioned as if the full 60s always mapped across 250mm, and you're keeping just that slice.</p>
+          <p>Drag the two handles, or type exact start/end seconds. Reset restores the full track (and the original board length).</p>
+          <p>Editing the Length field directly recalibrates the scale for whatever trim is currently selected &mdash; typing a number always means "this many mm for THIS window," not something that gets silently overwritten the next time you touch the trim handles.</p>
+          <p>Play/Stop/seek preview exactly the trimmed window, not the whole file &mdash; what you hear matches what gets carved.</p>
+        </details>
+
+        <details>
+          <summary>Playback</summary>
+          <dl>
+            <dt>Play / Stop</dt><dd>Starts at the trim's start, stops at its end.</dd>
+            <dt>&laquo;5 / 5&raquo;</dt><dd>Nudge back/forward 5 seconds, clamped within the trim window.</dd>
+            <dt>Seek bar</dt><dd>Drag to jump anywhere within the trim.</dd>
+          </dl>
+          <p>The cyan marker on the 3D relief traces the actual carved profile in sync with playback &mdash; it's a real readout of the terrain at that instant, not decorative.</p>
+        </details>
+
+        <details>
+          <summary>Presets</summary>
+          <p>Starter presets (Quick Test, Decorative Shallow, Deep Relief, Fine Detail) are fixed, always there, not deletable &mdash; ready-made starting points, not an empty save-your-own list.</p>
+          <p>Your own presets: name it, hit Save &mdash; captures every board/carve/tooling/motion value (not the audio file itself, not camera/viewport state). Load instantly reapplies all of it.</p>
+          <p>Stored in this browser's local storage only &mdash; nothing leaves your machine. One real catch: local storage on <code>file://</code> pages (a downloaded copy opened directly, not the live site) can be unreliable &mdash; some browsers won't actually persist it. Presets work reliably on the deployed site (the axisbim.io link, top right). If Save silently doesn't show your preset afterward, that's almost certainly why &mdash; the app disables the whole Presets section on load if it detects storage genuinely isn't working, rather than let you save into a black hole.</p>
+        </details>
+
+        <details>
+          <summary>Viewport &amp; navigation</summary>
+          <p>Drag to orbit, scroll to zoom.</p>
+          <dl>
+            <dt>Home / Top / Front / Right</dt><dd>Camera presets.</dd>
+            <dt>0,0</dt><dd>Toggles the machine-origin marker: shows exactly where G-code X0/Y0 sits, colored to the ISO 841/DIN CNC convention (X=red, Y=green, Z=blue) &mdash; not this app's own accent palette, since mixing up axis colors is exactly the kind of thing worth avoiding.</dd>
+            <dt>Section</dt><dd>Cuts the board along X at a position you drag or type, with a red profile trace showing the actual depth at that line.</dd>
+            <dt>X-Ray</dt><dd>Ghosts the stock material so you can see straight through to the carved surface, plus a wireframe of the true board envelope (L&times;W&times;depth, real mm).</dd>
+          </dl>
+        </details>
+
+        <details>
+          <summary>Export</summary>
+          <dl>
+            <dt>Download G-code</dt><dd>The primary CNC output. Multi-level stepdown roughing pass (if enabled) + finishing pass. Always exports in mm (<code>G21</code>) regardless of whether you're viewing in mm or in.</dd>
+            <dt>Download STL</dt><dd>A real, true-to-scale (not the exaggerated ~3.2&times; preview scale) watertight solid. Meant for sanity-checking the shape in a slicer or CAM tool before committing material &mdash; not itself a CNC toolpath. Bottom face is a single flat quad rather than one triangle-pair per grid cell (same shape, roughly half the file size).</dd>
+            <dt>Re-render preview</dt><dd>Rebuilds the 3D view from current settings without re-processing the audio.</dd>
+          </dl>
+        </details>
+
+        <details>
+          <summary>Tips, limits, and things learned the hard way</summary>
+          <p>Large files: STFT analysis runs in a background Web Worker so the tab stays responsive, but a big FLAC (100MB+) still takes real time to grind through &mdash; you'll see live progress instead of a frozen tab; that's the fix, not instant analysis.</p>
+          <p>No hard file-size cap, but very long files mean more STFT frames &mdash; more memory and more analysis time. If you only care about a slice of a long track, decode the whole thing once, then use Trim to iterate on carve settings from there.</p>
+          <p>The 3D preview exaggerates depth ~3.2&times; for visibility &mdash; display-only. Both the STL and G-code always use real, true-to-scale mm depth. Don't judge actual carve depth by eye in the preview; check the numbers.</p>
+          <p>Numeric fields clamp to their configured range and say so when they do (check the log) &mdash; if a value doesn't seem to "stick," it's very likely a clamp, not a bug.</p>
+          <p>Codec support depends entirely on your browser's native decoder &mdash; wav/mp3/m4a/aac/ogg/flac all generally work in current Chrome/Edge/Safari; less common formats are untested.</p>
+        </details>
+
+      </div>
+    </div>
+  </div>
 
   <div class="panel">
     <label class="drop" id="drop" for="fileInput" data-tip="Accepts wav, mp3, m4a, and most other audio formats. Decoded and processed entirely in your browser — nothing is uploaded anywhere.">
@@ -817,7 +993,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.25";
+  const APP_VERSION = "1.26";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1228,8 +1404,15 @@
     if(!$("presetSelect").contains(e.target)) closePresetMenu();
   });
   document.addEventListener("keydown", (e)=>{
-    if(e.key === "Escape") closePresetMenu();
+    if(e.key === "Escape"){ closePresetMenu(); closeHelp(); }
   });
+
+  // ---------- help modal ----------
+  function openHelp(){ $("helpModal").hidden = false; }
+  function closeHelp(){ $("helpModal").hidden = true; }
+  $("helpBtn").addEventListener("click", openHelp);
+  $("helpCloseBtn").addEventListener("click", closeHelp);
+  $("helpBackdrop").addEventListener("click", closeHelp);
 
   $("presetDelete").addEventListener("click", ()=>{
     const raw = presetSelectValue;
