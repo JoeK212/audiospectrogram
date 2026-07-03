@@ -11,6 +11,16 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.11 — STL bottom face collapsed to a single flat quad instead of one
+          triangle pair per grid cell. The bottom is perfectly flat
+          everywhere, so subdividing it at the top surface's resolution
+          was ~50% of the file's triangle count for zero visual or
+          volumetric benefit. 100x250 grid: 99,996 tri / 4.77MB before,
+          50,696 tri / 2.42MB after — same solid, same watertightness at
+          the outer boundary, roughly half the file size. Top surface
+          (the actual relief) and the four side walls are untouched —
+          the sides carry real relief detail along their top edge and
+          can't be simplified the same way without losing that detail.
   v1.10 — added a Stop button next to Play. stopPlayback() already existed
           internally (used when a clip finishes or a new file loads) but
           had no button wired to it, so pausing was the only way to stop
@@ -352,7 +362,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.10 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.11 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -493,7 +503,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.10";
+  const APP_VERSION = "1.11";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1593,9 +1603,10 @@
     const topZ = new Float32Array(rows*cols);
     for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) topZ[r*cols+c] = finalZ(heightmap[r][c]);
 
-    // triangle count: top surface + bottom + four side walls
+    // triangle count: top surface (needs full grid resolution — it's the
+    // actual relief) + a single flat bottom quad (see below) + four sides
     const nTop = (rows-1)*(cols-1)*2;
-    const nBottom = (rows-1)*(cols-1)*2;
+    const nBottom = 2;
     const nSides = ((rows-1)*2 + (cols-1)*2) * 2;
     const nTri = nTop + nBottom + nSides;
 
@@ -1627,13 +1638,22 @@
         writeTri(x0,y0,z00, x1,y1,z11, x0,y1,z01);
       }
     }
-    // flat bottom (reversed winding so the normal faces down/outward)
-    for(let r=0;r<rows-1;r++){
-      for(let c=0;c<cols-1;c++){
-        const x0=xCoords[c], x1=xCoords[c+1], y0=yCoords[r], y1=yCoords[r+1];
-        writeTri(x0,y0,zBase, x1,y1,zBase, x1,y0,zBase);
-        writeTri(x0,y0,zBase, x0,y1,zBase, x1,y1,zBase);
-      }
+    // flat bottom — a single quad, not one per grid cell. The bottom is
+    // perfectly flat everywhere, so subdividing it at the top surface's
+    // grid resolution was ~50% of the file's triangles for zero visual
+    // or volumetric benefit. The side walls' bottom edges are already at
+    // this same zBase and run along these same four boundary lines, so
+    // the solid stays fully closed (no gaps) — the one geometric trade
+    // is that this creates T-junctions where the single long bottom edge
+    // meets the side walls' many smaller boundary segments, rather than
+    // a perfectly 1:1 shared-edge triangulation. That's a non-issue for
+    // slicers/CAM viewers (surface is still fully covered, no holes) but
+    // worth knowing if something ever runs a strict manifold validator.
+    {
+      const X0 = xCoords[0], X1 = xCoords[cols-1];
+      const Y0 = yCoords[0], Y1 = yCoords[rows-1];
+      writeTri(X0,Y0,zBase, X1,Y1,zBase, X1,Y0,zBase);
+      writeTri(X0,Y0,zBase, X0,Y1,zBase, X1,Y1,zBase);
     }
     // side walls: front (r=0), back (r=rows-1), left (c=0), right (c=cols-1)
     for(let c=0;c<cols-1;c++){
