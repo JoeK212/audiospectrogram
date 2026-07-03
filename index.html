@@ -11,6 +11,22 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.25 — swept the codebase for the same bug class fixed in v1.24
+          (typed values silently clamped with no feedback) rather than
+          treating max depth as an isolated fix. Found one more real
+          instance: the trim start/end numeric fields go through
+          clampTrim() the same way, with the same silent-substitution
+          problem — type a trim start past the end of the file, or a
+          negative value, and it'd clamp without saying so. Same fix
+          applied: a clear warning naming what got clamped and why.
+          Checked every other Math.min/Math.max clamp in the codebase
+          (camera drag/zoom, section position, playhead, STFT frame
+          indices) — all of those are driven by mouse drag or internal
+          geometry math, not typed text input, so clamping there is
+          normal/expected interactive behavior (like a scrollbar
+          hitting its end) and doesn't need the same treatment.
+          Verified the trim fix against three scenarios (out-of-range
+          start, valid in-range value, negative end) before shipping.
   v1.24 — fixed numeric fields silently clamping instead of accepting
           typed values, reported as "I enter 1 or any value, it returns
           0.787" on max depth in inches mode. Root cause: max depth's
@@ -635,7 +651,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.24 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.25 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -801,7 +817,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.24";
+  const APP_VERSION = "1.25";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -2139,14 +2155,22 @@
   });
 
   $("trimStartInput").addEventListener("change", (e)=>{
-    trimStart = Number(e.target.value) || 0;
+    const typed = Number(e.target.value) || 0;
+    trimStart = typed;
     clampTrim("start");
+    if(Math.abs(trimStart - typed) > 1e-6){
+      log("trim start clamped to " + trimStart.toFixed(1) + "s (must stay within 0\u2013" + audioDuration.toFixed(1) + "s and leave room before trim end)", "warn");
+    }
     updateTrimUI();
     applyTrimChange();
   });
   $("trimEndInput").addEventListener("change", (e)=>{
-    trimEnd = Number(e.target.value) || 0;
+    const typed = Number(e.target.value) || 0;
+    trimEnd = typed;
     clampTrim("end");
+    if(Math.abs(trimEnd - typed) > 1e-6){
+      log("trim end clamped to " + trimEnd.toFixed(1) + "s (must stay within 0\u2013" + audioDuration.toFixed(1) + "s and leave room after trim start)", "warn");
+    }
     updateTrimUI();
     applyTrimChange();
   });
