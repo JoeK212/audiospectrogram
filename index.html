@@ -11,6 +11,29 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.18 — seek bar and ±5s nudge buttons, since Play/Stop alone had no
+          way to move around within a clip. Seek bar: pointerdown pauses
+          any live playback first (Web Audio can't reposition a running
+          source — it's stop-and-recreate either way), input events give
+          a live drag preview (playhead + time, no audio state touched),
+          change on release commits the position and resumes playback if
+          it was playing before. Fixed a latent bug this surfaced:
+          startPlayback() never stopped an existing source before
+          starting a new one — harmless when only ever called from a
+          clean stopped/paused state, but seek/nudge now call it to
+          restart from a new position while already playing, which
+          would have left the old source running underneath the new
+          one. Verified clamping math standalone (seek/nudge bounds at
+          both ends of the clip) before shipping.
+  v1.17 — relabeled board "width"/"height" to "length"/"width". Having
+          "height" (a horizontal Y-axis dimension) sitting right above
+          "max depth" (the actual Z axis) read as if height were the
+          vertical one — standard CNC/stock convention is length x width
+          for the footprint, height/thickness reserved for the vertical
+          dimension. Matches the L×W×depth wording already used in the
+          X-ray readout. Label-only change — internal param names
+          (boardW/boardH) and field ids (bw/bh) untouched, so G-code,
+          STL, and preset storage are all unaffected.
   v1.16 — systematic audit of the v1.15 custom dropdown rewrite. Found
           and fixed a stray extra closing brace left over from
           restructuring the "My presets" section (caught by manual
@@ -290,12 +313,28 @@
     background: rgba(10,10,10,0.7); border:1px solid var(--line); backdrop-filter: blur(2px);
   }
   .playTools{
-    position:absolute; top:42px; left:16px; z-index:5; display:flex; align-items:center; gap:10px;
+    position:absolute; top:42px; left:16px; z-index:5; display:flex; flex-direction:column; gap:0;
     background: rgba(10,10,10,0.7); border:1px solid var(--line); backdrop-filter: blur(2px); padding:0;
+    width:260px;
   }
+  .playControlsRow{ display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--line); }
   .playTools .navBtn{ border-right:none; min-width:52px; }
   .playTools .navBtn.active{ background:var(--accent); color:var(--black); }
+  .playTools .navBtn:disabled{ opacity:.35; cursor:not-allowed; }
   .playTime{ font-family:var(--mono); font-size:10px; color:var(--ink-dim); padding-right:11px; min-width:64px; }
+  .playSeekRow{ display:flex; align-items:center; gap:8px; padding:7px 10px; }
+  .playSeekRow .navBtn{ border:none; min-width:0; padding:2px 4px; font-size:9.5px; }
+  .playSeekRow input[type=range]{
+    flex:1; -webkit-appearance:none; -moz-appearance:none; appearance:none; height:1px; background:var(--line); outline:none;
+  }
+  .playSeekRow input[type=range]:disabled{ opacity:.35; }
+  .playSeekRow input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:10px; height:10px; background:var(--accent); border-radius:0; cursor:pointer;
+  }
+  .playSeekRow input[type=range]::-moz-range-thumb{
+    width:10px; height:10px; background:var(--accent); border:none; border-radius:0; cursor:pointer;
+  }
+  .playSeekRow input[type=range]::-moz-range-track{ height:1px; background:var(--line); }
   .xrayInfo{
     position:absolute; top:64px; right:16px; z-index:5; font-family:var(--mono); font-size:10px;
     color:var(--accent); background: rgba(10,10,10,0.7); border:1px solid var(--line); padding:7px 11px;
@@ -446,7 +485,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.16 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.18 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -486,11 +525,11 @@
 
     <div class="section-label">board</div>
     <div class="row2">
-      <div class="field" data-tip="Width of the material blank — the time axis of the recording is stretched across this dimension.">
-        <label>width <span class="valWrap"><input type="number" class="valInput" id="n_bw" step="1"><span class="unitSuffix" id="u_bw">mm</span></span></label>
+      <div class="field" data-tip="Length of the material blank — the time axis of the recording is stretched across this dimension.">
+        <label>length <span class="valWrap"><input type="number" class="valInput" id="n_bw" step="1"><span class="unitSuffix" id="u_bw">mm</span></span></label>
         <input type="range" id="bw" min="60" max="600" step="5" value="250" data-kind="length"></div>
-      <div class="field" data-tip="Height of the material blank — the frequency axis of the recording runs along this dimension.">
-        <label>height <span class="valWrap"><input type="number" class="valInput" id="n_bh" step="1"><span class="unitSuffix" id="u_bh">mm</span></span></label>
+      <div class="field" data-tip="Width of the material blank — the frequency axis of the recording runs along this dimension.">
+        <label>width <span class="valWrap"><input type="number" class="valInput" id="n_bh" step="1"><span class="unitSuffix" id="u_bh">mm</span></span></label>
         <input type="range" id="bh" min="40" max="400" step="5" value="150" data-kind="length"></div>
     </div>
 
@@ -547,9 +586,16 @@
   <main>
     <div class="hint">drag to orbit &middot; scroll to zoom</div>
     <div class="playTools" id="playTools">
-      <button type="button" class="navBtn" id="navPlay" disabled data-tip="Play the sound while a marker traces the carved profile across the board in sync.">play</button>
-      <button type="button" class="navBtn" id="navStop" disabled data-tip="Stop playback and reset the playhead to the start.">stop</button>
-      <span class="playTime" id="playTime"></span>
+      <div class="playControlsRow">
+        <button type="button" class="navBtn" id="navPlay" disabled data-tip="Play the sound while a marker traces the carved profile across the board in sync.">play</button>
+        <button type="button" class="navBtn" id="navStop" disabled data-tip="Stop playback and reset the playhead to the start.">stop</button>
+        <span class="playTime" id="playTime"></span>
+      </div>
+      <div class="playSeekRow">
+        <button type="button" class="navBtn" id="navSeekBack" disabled data-tip="Back 5 seconds.">&laquo;5</button>
+        <input type="range" id="playSeek" min="0" max="0" step="0.1" value="0" disabled data-tip="Drag to jump to any point in the sound.">
+        <button type="button" class="navBtn" id="navSeekFwd" disabled data-tip="Forward 5 seconds.">5&raquo;</button>
+      </div>
     </div>
     <div class="navTools" id="navTools">
       <button type="button" class="navBtn" id="navHome" data-tip="Reset the view to the default angle and frame the whole board.">home</button>
@@ -590,7 +636,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.16";
+  const APP_VERSION = "1.18";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1180,6 +1226,10 @@
     $("recomputeBtn").disabled = false;
     $("navPlay").disabled = false;
     $("navStop").disabled = false;
+    $("navSeekBack").disabled = false;
+    $("navSeekFwd").disabled = false;
+    $("playSeek").disabled = false;
+    $("playSeek").max = audioDuration.toFixed(1);
     $("emptyState").style.display = "none";
   }
 
@@ -1297,7 +1347,10 @@
     if(isPlaying && audioCtx){
       const elapsed = audioCtx.currentTime - playStartCtxTime;
       if(elapsed >= audioDuration) stopPlayback();
-      else updatePlayheadAt(elapsed);
+      else {
+        updatePlayheadAt(elapsed);
+        if(!seekDragging) $("playSeek").value = elapsed.toFixed(1);
+      }
     }
     if(renderer) renderer.render(scene, camera);
   }
@@ -1528,6 +1581,14 @@
     }
     if(audioCtx.state === "suspended") audioCtx.resume();
     if(playPausedAt >= audioDuration) playPausedAt = 0;
+    // Stop any already-running source first — this used to only ever be
+    // called from a clean stopped/paused state, but seek/nudge now call it
+    // to restart from a new position while already playing. Web Audio
+    // doesn't support repositioning a started AudioBufferSourceNode, so
+    // "restart from playPausedAt" is really "throw away the old node,
+    // make a new one" — skipping this would leave the old node playing
+    // in the background, overlapping the new one.
+    if(playSourceNode){ try{ playSourceNode.stop(); }catch(e){} playSourceNode = null; }
     const buffer = audioCtx.createBuffer(1, rawSamples.length, rawSR);
     buffer.copyToChannel(rawSamples, 0);
     playSourceNode = audioCtx.createBufferSource();
@@ -1557,6 +1618,7 @@
     playPausedAt = 0;
     $("navPlay").textContent = "play";
     $("navPlay").classList.remove("active");
+    $("playSeek").value = "0";
     removePlayhead();
   }
 
@@ -1565,6 +1627,54 @@
     if(isPlaying) pausePlayback();
     else startPlayback();
   }
+
+  // ---------- seek/nudge ----------
+  // Dragging the seek bar pauses any live playback first (Web Audio can't
+  // reposition a running source anyway — see startPlayback's comment) so
+  // the live drag preview isn't racing the actual audio; releasing the
+  // bar resumes playback from the new spot if it was playing before.
+  let seekDragging = false, wasPlayingBeforeSeek = false;
+
+  function currentPlaybackTime(){
+    return isPlaying ? (audioCtx.currentTime - playStartCtxTime) : playPausedAt;
+  }
+
+  function seekTo(t){
+    t = Math.max(0, Math.min(audioDuration, t));
+    playPausedAt = t;
+    $("playSeek").value = t.toFixed(1);
+    if(isPlaying) startPlayback(); // restarts from the new playPausedAt
+    else updatePlayheadAt(t);
+  }
+
+  function nudge(deltaSeconds){
+    if(!rawSamples || !heightmap) return;
+    seekTo(currentPlaybackTime() + deltaSeconds);
+  }
+
+  $("navSeekBack").addEventListener("click", ()=> nudge(-5));
+  $("navSeekFwd").addEventListener("click", ()=> nudge(5));
+
+  $("playSeek").addEventListener("pointerdown", ()=>{
+    if(!rawSamples || !heightmap) return;
+    seekDragging = true;
+    wasPlayingBeforeSeek = isPlaying;
+    if(isPlaying) pausePlayback(); // freezes at the current position; drag preview takes over from here
+  });
+  $("playSeek").addEventListener("input", (e)=>{
+    // Live preview while dragging — moves the 3D marker and time readout
+    // without touching audio playback state (that only happens on release).
+    const t = Number(e.target.value);
+    playPausedAt = t;
+    updatePlayheadAt(t);
+  });
+  $("playSeek").addEventListener("change", (e)=>{
+    seekDragging = false;
+    const t = Number(e.target.value);
+    playPausedAt = t;
+    if(wasPlayingBeforeSeek) startPlayback(); // resume from the scrubbed-to position
+    else updatePlayheadAt(t);
+  });
 
   function toggleSection(){
     sectionEnabled = !sectionEnabled;
