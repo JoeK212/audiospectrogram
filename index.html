@@ -11,6 +11,24 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.20 — playback now previews the trim selection, not the whole file.
+          v1.19 shipped trim as independent of Play/Stop/seek on
+          purpose, but that meant pressing Play always played the full
+          track regardless of the trim window — not what "isolate an
+          area of the track" actually needs; you couldn't hear what you
+          selected. Play now starts at trimStart, stops at trimEnd, seek
+          bar bounds are [trimStart, trimEnd], nudge clamps within the
+          window, Stop resets to trimStart. Changing the trim (drag,
+          type, reset) snaps playback back into the new window if the
+          current position falls outside it — via a shared
+          applyTrimChange() helper used by all three trim-change entry
+          points instead of three copies of the same sync logic. Fixed
+          stale code comments/tooltips from v1.19 that described the old
+          "independent of playback" design. Verified five interaction
+          scenarios standalone (fresh play snapping into the window,
+          end-of-window stop, nudge clamping at both bounds, resetting
+          trim while paused inside vs. outside the old window) before
+          shipping.
   v1.19  — trim range: pick a window of the track to feed the relief,
           instead of always the whole file. Dual drag-handle bar plus
           numeric start/end fields (in seconds), reset-to-full button.
@@ -530,7 +548,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.19 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.20 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -638,10 +656,10 @@
       </div>
       <div class="playSeekRow">
         <button type="button" class="navBtn" id="navSeekBack" disabled data-tip="Back 5 seconds.">&laquo;5</button>
-        <input type="range" id="playSeek" min="0" max="0" step="0.1" value="0" disabled data-tip="Drag to jump to any point in the sound.">
+        <input type="range" id="playSeek" min="0" max="0" step="0.1" value="0" disabled data-tip="Drag to jump anywhere within the trimmed selection.">
         <button type="button" class="navBtn" id="navSeekFwd" disabled data-tip="Forward 5 seconds.">5&raquo;</button>
       </div>
-      <div class="trimRow" data-tip="Only this window of the track feeds the relief and G-code — the rest of the file is ignored. Playback above still covers the whole file; this only selects what gets carved.">
+      <div class="trimRow" data-tip="Only this window of the track feeds the relief and G-code — the rest of the file is ignored. Play/Stop/seek above also preview just this window, so what you hear matches what gets carved.">
         <div class="trimBar" id="trimBar">
           <div class="trimTrack"></div>
           <div class="trimRange" id="trimRange"></div>
@@ -696,7 +714,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.19";
+  const APP_VERSION = "1.20";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1180,10 +1198,12 @@
   // that could drift apart (same reasoning as PREVIEW_EXAGGERATION).
   const STFT_NPERSEG = 1024, STFT_NOVERLAP = 768, STFT_HOP = STFT_NPERSEG - STFT_NOVERLAP;
 
-  // Trim range (seconds) — which window of the track actually feeds the
-  // relief/G-code. Deliberately independent of playback: Play/Stop/seek
-  // always cover the full file (this isn't turning into an audio editor),
-  // trim only selects the analysis input. Reset per-file in decodeAndAnalyze.
+  // Trim range (seconds) — which window of the track feeds the
+  // relief/G-code, and (since v1.20) what Play/Stop/seek preview too —
+  // playback shows exactly what's selected, not the whole file. This
+  // still isn't turning into an audio editor: no cut/copy/fade/export of
+  // the audio itself, just "only analyze/preview this window". Reset
+  // per-file in decodeAndAnalyze.
   let trimStart = 0, trimEnd = 0;
 
   function decodeAndAnalyze(file){
@@ -1292,6 +1312,7 @@
     dbGridFull = dbFrames; // [frame][bin] normalized 0..1
     log(nFramesRaw + " frames x " + nBins + " freq bins analyzed", "ok");
     trimStart = 0; trimEnd = audioDuration; // full track by default — must be set before the first build below
+    playPausedAt = trimStart;
     buildHeightmapFromCache();
     $("downloadBtn").disabled = false;
     $("downloadStlBtn").disabled = false;
@@ -1301,7 +1322,7 @@
     $("navSeekBack").disabled = false;
     $("navSeekFwd").disabled = false;
     $("playSeek").disabled = false;
-    $("playSeek").max = audioDuration.toFixed(1);
+    syncSeekBounds();
     $("trimStartInput").disabled = false;
     $("trimEndInput").disabled = false;
     $("trimReset").disabled = false;
@@ -1433,7 +1454,7 @@
     camera.lookAt(orbit.target);
     if(isPlaying && audioCtx){
       const elapsed = audioCtx.currentTime - playStartCtxTime;
-      if(elapsed >= audioDuration) stopPlayback();
+      if(elapsed >= trimEnd) stopPlayback();
       else {
         updatePlayheadAt(elapsed);
         if(!seekDragging) $("playSeek").value = elapsed.toFixed(1);
@@ -1667,7 +1688,13 @@
       audioCtx = new AC();
     }
     if(audioCtx.state === "suspended") audioCtx.resume();
-    if(playPausedAt >= audioDuration) playPausedAt = 0;
+    // Snap into the trim window if the paused position is outside it —
+    // covers "never played yet" (playPausedAt starts at 0, which is
+    // before trimStart unless trim is untouched) and "trim changed while
+    // paused mid-window". Playback previews exactly what's trimmed, not
+    // the whole file, so there's no valid paused position outside
+    // [trimStart, trimEnd] to resume from.
+    if(playPausedAt < trimStart || playPausedAt >= trimEnd) playPausedAt = trimStart;
     // Stop any already-running source first — this used to only ever be
     // called from a clean stopped/paused state, but seek/nudge now call it
     // to restart from a new position while already playing. Web Audio
@@ -1702,10 +1729,10 @@
   function stopPlayback(){
     if(playSourceNode){ try{ playSourceNode.stop(); }catch(e){} playSourceNode = null; }
     isPlaying = false;
-    playPausedAt = 0;
+    playPausedAt = trimStart; // reset to the start of the current selection, not always 0
     $("navPlay").textContent = "play";
     $("navPlay").classList.remove("active");
-    $("playSeek").value = "0";
+    $("playSeek").value = trimStart.toFixed(1);
     removePlayhead();
   }
 
@@ -1716,18 +1743,23 @@
   }
 
   // ---------- seek/nudge ----------
-  // Dragging the seek bar pauses any live playback first (Web Audio can't
-  // reposition a running source anyway — see startPlayback's comment) so
-  // the live drag preview isn't racing the actual audio; releasing the
-  // bar resumes playback from the new spot if it was playing before.
+  // Seek bar and nudge are scoped to [trimStart, trimEnd] — the trim
+  // window is "this is my selection", so playback previews exactly that,
+  // not the whole file. syncSeekBounds() keeps the slider's min/max
+  // matching the current trim whenever it changes.
   let seekDragging = false, wasPlayingBeforeSeek = false;
+
+  function syncSeekBounds(){
+    $("playSeek").min = trimStart.toFixed(1);
+    $("playSeek").max = trimEnd.toFixed(1);
+  }
 
   function currentPlaybackTime(){
     return isPlaying ? (audioCtx.currentTime - playStartCtxTime) : playPausedAt;
   }
 
   function seekTo(t){
-    t = Math.max(0, Math.min(audioDuration, t));
+    t = Math.max(trimStart, Math.min(trimEnd, t));
     playPausedAt = t;
     $("playSeek").value = t.toFixed(1);
     if(isPlaying) startPlayback(); // restarts from the new playPausedAt
@@ -1764,8 +1796,9 @@
   });
 
   // ---------- trim (which window of the track feeds the relief) ----------
-  // Independent of playback on purpose — Play/Stop/seek above always cover
-  // the whole file; this only changes what buildHeightmapFromCache() reads.
+  // Scoped together with playback (not independent — see v1.20 note above
+  // trimStart/trimEnd's declaration): changing the trim also updates what
+  // Play/Stop/seek preview, via applyTrimChange() below.
   let trimDragHandle = null; // 'start' | 'end' | null while a handle is being dragged
 
   function clampTrim(movedHandle){
@@ -1796,6 +1829,23 @@
     return frac * audioDuration;
   }
 
+  // Shared by all three ways a trim can change (drag release, either
+  // numeric field, reset button) — sync the seek bar's bounds to match,
+  // and if the current playback position (live or paused) no longer
+  // falls inside the new window, snap it back to trimStart rather than
+  // leaving playback pointing somewhere the selection no longer covers.
+  function applyTrimChange(){
+    syncSeekBounds();
+    const pos = currentPlaybackTime();
+    if(pos < trimStart || pos > trimEnd){
+      if(isPlaying) stopPlayback();
+      else { playPausedAt = trimStart; $("playSeek").value = trimStart.toFixed(1); updatePlayheadAt(trimStart); }
+    } else {
+      $("playSeek").value = pos.toFixed(1);
+    }
+    if(dbGridFull) buildHeightmapFromCache();
+  }
+
   ["trimHandleStart","trimHandleEnd"].forEach(id=>{
     $(id).addEventListener("pointerdown", (e)=>{
       if(!rawSamples || !heightmap) return;
@@ -1816,26 +1866,26 @@
     $("trimHandleStart").classList.remove("dragging");
     $("trimHandleEnd").classList.remove("dragging");
     trimDragHandle = null;
-    if(dbGridFull) buildHeightmapFromCache();
+    applyTrimChange();
   });
 
   $("trimStartInput").addEventListener("change", (e)=>{
     trimStart = Number(e.target.value) || 0;
     clampTrim("start");
     updateTrimUI();
-    if(dbGridFull) buildHeightmapFromCache();
+    applyTrimChange();
   });
   $("trimEndInput").addEventListener("change", (e)=>{
     trimEnd = Number(e.target.value) || 0;
     clampTrim("end");
     updateTrimUI();
-    if(dbGridFull) buildHeightmapFromCache();
+    applyTrimChange();
   });
   $("trimReset").addEventListener("click", ()=>{
     if(!audioDuration) return;
     trimStart = 0; trimEnd = audioDuration;
     updateTrimUI();
-    if(dbGridFull) buildHeightmapFromCache();
+    applyTrimChange();
     log("trim reset to full track", "ok");
   });
 

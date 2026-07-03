@@ -5,7 +5,7 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.19 — full changelog is a comment block at the top of
+**Version:** v1.20 — full changelog is a comment block at the top of
 `index.html` (source of truth if this file drifts out of date).
 
 ## Pipeline
@@ -22,7 +22,7 @@ the true board envelope) and playback (Play/Stop, seek bar, ±5s nudge)
 with a synced marker
 tracing the relief in time with the sound. A trim range (drag handles +
 numeric fields) selects which window of the track feeds the relief —
-independent of playback, which always covers the whole file. Presets
+playback previews exactly that window, not the whole file. Presets
 (save/load/delete,
 named, stored in this browser only) capture every tunable value so you
 can snap back to a known-good setup.
