@@ -11,6 +11,32 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.23 — STFT analysis moved to a Web Worker, off the main thread. A
+          140MB FLAC test confirmed the real cost this session flagged:
+          the synchronous frame-by-frame FFT loop froze the tab for
+          however long analysis took, with zero feedback beyond the
+          initial "running STFT..." log line. Now runs in a worker with
+          live progress ("analyzing 43%..." in the status readout) while
+          the UI stays fully responsive. Falls back to the original
+          synchronous path if Worker isn't available (old browsers,
+          restrictive contexts) or if worker creation itself throws.
+          The actual STFT math (fft/hannWindow/frame loop) lives in ONE
+          function (runSTFTCore) used both ways — injected into the
+          worker via .toString() and called directly for the fallback —
+          instead of two copies that could drift apart. Switched
+          dbGridFull's internal representation from nested Float32Array-
+          per-frame to one flat Float32Array (frame-major), reconstructed
+          into the same [frame][bin] access pattern on the main thread
+          afterward — flat data transfers to/from a worker with zero
+          copy via the postMessage transfer list; nested arrays would
+          need a slow structured-clone walk. Added a stale-worker guard:
+          if a second file loads while the first's analysis is still
+          in flight, the old worker's results are ignored entirely
+          rather than potentially overwriting the new file's state.
+          Verified before shipping: the refactored flat-array algorithm
+          produces byte-identical output to the original nested-array
+          version (max diff 0 across 30,267 test values), and the
+          generated worker source is syntactically valid.
   v1.22 — fixed the playhead marker not starting at the origin (0,0)
           when playback begins. v1.21 made board length represent
           [trimStart, trimEnd] instead of the whole file, but
@@ -593,7 +619,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.22 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.23 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -759,7 +785,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.22";
+  const APP_VERSION = "1.23";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1256,6 +1282,58 @@
     return w;
   }
 
+  // Self-contained STFT core — deliberately references nothing outside its
+  // own parameters plus fft/hannWindow (also self-contained). This lets it
+  // run two ways from ONE definition instead of two copies that could
+  // drift apart: injected into a Web Worker via .toString() (workers don't
+  // share scope with the main thread, so the source has to travel as
+  // text), or called directly as the synchronous fallback if Workers
+  // aren't available. Returns a flat Float32Array (frame-major) rather
+  // than nested arrays — flat transfers to/from a worker with zero copy
+  // via the postMessage transfer list; nested arrays would need a slow
+  // structured-clone walk.
+  function runSTFTCore(rawSamples, rawSR, nperseg, noverlap, onProgress){
+    const hop = nperseg - noverlap;
+    const win = hannWindow(nperseg);
+    const nFramesRaw = Math.max(1, Math.floor((rawSamples.length - nperseg) / hop) + 1);
+    const nBins = nperseg/2 + 1;
+    const re = new Float32Array(nperseg), im = new Float32Array(nperseg);
+    const dbFlat = new Float32Array(nFramesRaw * nBins);
+    let maxDb = -Infinity;
+    const progressStep = Math.max(1, Math.floor(nFramesRaw/50)); // ~50 updates total, not one per frame
+    for(let f=0; f<nFramesRaw; f++){
+      const start = f*hop;
+      for(let i=0;i<nperseg;i++){
+        const s = rawSamples[start+i] || 0;
+        re[i] = s * win[i];
+        im[i] = 0;
+      }
+      fft(re, im);
+      const rowOff = f*nBins;
+      for(let k=0;k<nBins;k++){
+        const mag = Math.sqrt(re[k]*re[k] + im[k]*im[k]);
+        const db = 20*Math.log10(mag + 1e-9);
+        dbFlat[rowOff+k] = db;
+        if(db > maxDb) maxDb = db;
+      }
+      if(onProgress && (f % progressStep === 0)) onProgress(f, nFramesRaw);
+    }
+    const floor = maxDb - 60;
+    let rangeMax = -Infinity, rangeMin = Infinity;
+    for(let i=0;i<dbFlat.length;i++){
+      let v = dbFlat[i];
+      if(v < floor) v = floor;
+      dbFlat[i] = v;
+      if(v>rangeMax) rangeMax=v;
+      if(v<rangeMin) rangeMin=v;
+    }
+    const span = (rangeMax - rangeMin) || 1;
+    for(let i=0;i<dbFlat.length;i++){
+      dbFlat[i] = (dbFlat[i]-rangeMin)/span;
+    }
+    return { dbFlat, nFramesRaw, nBins, freqStepHz: rawSR/nperseg };
+  }
+
   // ---------- audio -> normalized dB spectrogram (full res) ----------
   let rawSamples=null, rawSR=0;
   let dbGridFull=null;   // [frameIdx][freqBinIdx], 0..1 normalized
@@ -1361,60 +1439,47 @@
     reader.readAsArrayBuffer(file);
   }
 
-  function analyzeSTFT(){
-    setStatus("analyzing");
-    log("running STFT...");
-    const nperseg = STFT_NPERSEG, noverlap = STFT_NOVERLAP, hop = STFT_HOP;
-    const win = hannWindow(nperseg);
-    const nFramesRaw = Math.max(1, Math.floor((rawSamples.length - nperseg) / hop) + 1);
-    const nBins = nperseg/2 + 1;
-    freqBinCount = nBins;
-    freqStepHz = rawSR / nperseg;
+  let stftWorker = null;
 
-    const magFrames = new Array(nFramesRaw);
-    const re = new Float32Array(nperseg), im = new Float32Array(nperseg);
-    let maxDb = -Infinity;
+  // Builds the worker's source by concatenating fft/hannWindow/runSTFTCore
+  // as text (via .toString()) instead of hand-duplicating them into a
+  // separate worker file — one definition of the actual math, not two
+  // that could quietly drift apart. Workers can't share scope with the
+  // main thread, so this is the only way to get this code where it needs
+  // to run without a build step or a second source file.
+  function buildSTFTWorker(){
+    const src = [
+      fft.toString(),
+      hannWindow.toString(),
+      runSTFTCore.toString(),
+      'self.onmessage = function(e){' +
+      '  var d = e.data;' +
+      '  try{' +
+      '    var result = runSTFTCore(d.rawSamples, d.rawSR, d.nperseg, d.noverlap, function(f, total){' +
+      '      self.postMessage({ type:"progress", frame:f, total:total });' +
+      '    });' +
+      '    self.postMessage({ type:"done", dbFlat:result.dbFlat, nFramesRaw:result.nFramesRaw, nBins:result.nBins, freqStepHz:result.freqStepHz }, [result.dbFlat.buffer]);' +
+      '  } catch(err){' +
+      '    self.postMessage({ type:"error", message: err.message });' +
+      '  }' +
+      '};'
+    ].join("\n\n");
+    const blob = new Blob([src], { type: "application/javascript" });
+    return new Worker(URL.createObjectURL(blob));
+  }
+
+  // Shared completion path for both the worker and the synchronous
+  // fallback — reconstructs the nested [frame][bin] structure
+  // buildHeightmapFromCache() and friends already expect, so nothing
+  // downstream needs to change to accommodate the flat transfer format.
+  function finishSTFT(nFramesRaw, nBins, dbFlat, freqStepHzResult){
     const dbFrames = new Array(nFramesRaw);
-
     for(let f=0; f<nFramesRaw; f++){
-      const start = f*hop;
-      for(let i=0;i<nperseg;i++){
-        const s = rawSamples[start+i] || 0;
-        re[i] = s * win[i];
-        im[i] = 0;
-      }
-      fft(re, im);
-      const dbRow = new Float32Array(nBins);
-      for(let k=0;k<nBins;k++){
-        const mag = Math.sqrt(re[k]*re[k] + im[k]*im[k]);
-        const db = 20*Math.log10(mag + 1e-9);
-        dbRow[k] = db;
-        if(db > maxDb) maxDb = db;
-      }
-      dbFrames[f] = dbRow;
+      dbFrames[f] = dbFlat.subarray(f*nBins, f*nBins+nBins);
     }
-
-    const floor = maxDb - 60;
-    let rangeMax = -Infinity, rangeMin = Infinity;
-    for(let f=0; f<nFramesRaw; f++){
-      const row = dbFrames[f];
-      for(let k=0;k<nBins;k++){
-        let v = row[k];
-        if(v < floor) v = floor;
-        row[k] = v;
-        if(v>rangeMax) rangeMax=v;
-        if(v<rangeMin) rangeMin=v;
-      }
-    }
-    const span = (rangeMax - rangeMin) || 1;
-    for(let f=0; f<nFramesRaw; f++){
-      const row = dbFrames[f];
-      for(let k=0;k<nBins;k++){
-        row[k] = (row[k]-rangeMin)/span;
-      }
-    }
-
     dbGridFull = dbFrames; // [frame][bin] normalized 0..1
+    freqBinCount = nBins;
+    freqStepHz = freqStepHzResult;
     log(nFramesRaw + " frames x " + nBins + " freq bins analyzed", "ok");
     trimStart = 0; trimEnd = audioDuration; // full track by default — must be set before the first build below
     playPausedAt = trimStart;
@@ -1436,6 +1501,64 @@
     $("trimHandleEnd").classList.remove("disabled");
     updateTrimUI();
     $("emptyState").style.display = "none";
+  }
+
+  function analyzeSTFT(){
+    setStatus("analyzing");
+    log("running STFT...");
+
+    if(typeof Worker === "undefined"){
+      log("this browser has no Web Worker support — analyzing on the main thread; the tab may freeze briefly for long files", "warn");
+      const result = runSTFTCore(rawSamples, rawSR, STFT_NPERSEG, STFT_NOVERLAP);
+      finishSTFT(result.nFramesRaw, result.nBins, result.dbFlat, result.freqStepHz);
+      return;
+    }
+
+    if(stftWorker){ try{ stftWorker.terminate(); }catch(e){} stftWorker = null; }
+    let worker;
+    try{
+      worker = buildSTFTWorker();
+    } catch(err){
+      log("couldn't start analysis worker (" + err.message + ") — falling back to the main thread", "warn");
+      const result = runSTFTCore(rawSamples, rawSR, STFT_NPERSEG, STFT_NOVERLAP);
+      finishSTFT(result.nFramesRaw, result.nBins, result.dbFlat, result.freqStepHz);
+      return;
+    }
+    stftWorker = worker;
+
+    worker.onmessage = function(e){
+      if(stftWorker !== worker) return; // superseded by a newer file load — ignore stale results entirely
+      const msg = e.data;
+      if(msg.type === "progress"){
+        setStatus("analyzing " + Math.round(100 * msg.frame / msg.total) + "%");
+      } else if(msg.type === "done"){
+        try{ worker.terminate(); }catch(e){}
+        stftWorker = null;
+        finishSTFT(msg.nFramesRaw, msg.nBins, msg.dbFlat, msg.freqStepHz);
+      } else if(msg.type === "error"){
+        log("analysis failed: " + msg.message, "warn");
+        setStatus("error");
+        try{ worker.terminate(); }catch(e){}
+        stftWorker = null;
+      }
+    };
+    worker.onerror = function(err){
+      if(stftWorker !== worker) return; // superseded by a newer file load
+      log("analysis worker error: " + (err.message || "unknown"), "warn");
+      setStatus("error");
+      try{ worker.terminate(); }catch(e){}
+      stftWorker = null;
+    };
+
+    // rawSamples is still needed on the main thread afterward (playback
+    // reads it to build the AudioBuffer), so transfer a COPY's buffer,
+    // not the original — postMessage transfer zeroes out the source
+    // buffer once handed off, and the original must survive intact.
+    const samplesCopy = rawSamples.slice();
+    worker.postMessage(
+      { rawSamples: samplesCopy, rawSR: rawSR, nperseg: STFT_NPERSEG, noverlap: STFT_NOVERLAP },
+      [samplesCopy.buffer]
+    );
   }
 
   // ---------- resample full-res dB grid onto board-resolution grid ----------

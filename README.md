@@ -5,12 +5,15 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.22 — full changelog is a comment block at the top of
+**Version:** v1.23 — full changelog is a comment block at the top of
 `index.html` (source of truth if this file drifts out of date).
 
 ## Pipeline
 
-Audio → STFT spectrogram → heightmap → three.js preview + G-code
+Audio → STFT spectrogram (runs in a Web Worker, off the main thread —
+the UI stays responsive during analysis, with live progress in the
+status readout; falls back to synchronous if Worker isn't available)
+→ heightmap → three.js preview + G-code
 (multi-level stepdown roughing + finishing pass) + STL export. Time →
 X, frequency → Y, loudness → Z depth. Board always stored in mm; G-code
 always exports mm (`G21`) regardless of the display unit toggle.
