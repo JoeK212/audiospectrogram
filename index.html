@@ -11,6 +11,25 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.22 — fixed the playhead marker not starting at the origin (0,0)
+          when playback begins. v1.21 made board length represent
+          [trimStart, trimEnd] instead of the whole file, but
+          updatePlayheadAt() still computed its board position with
+          frac = t/audioDuration — the pre-trim formula, now measuring
+          against the wrong denominator. At t=trimStart the marker
+          landed wherever trimStart happened to fall in the FULL file's
+          timeline, not at the start of the (now proportionally shrunk)
+          board. Fixed to frac = (t-trimStart)/(trimEnd-trimStart),
+          matching the same "position within the selection" logic the
+          seek bar already used. Also fixed the playTime readout
+          showing the full file's duration as "total" instead of
+          trimEnd — cosmetically correct in the exact case that exposed
+          the marker bug (trimEnd happened to equal audioDuration) but
+          would have been wrong for any trim that doesn't reach the end
+          of the file. Verified against the user's own numbers: old
+          formula put t=trimStart at worldX=14.79 (nowhere near the
+          edge); fixed formula puts it at exactly -40.5, the left edge,
+          matching the origin corner.
   v1.21 — board length is now a function of trim duration, not a fixed
           independent value. v1.19/v1.20 always stretched the trimmed
           window to fill the full board length regardless of how short
@@ -574,7 +593,7 @@
       <div class="wordmark">sound <b>/</b> relief</div>
       <div class="tag">audio &rarr; spectrogram &rarr; g-code</div>
     </div>
-    <div class="credit" id="versionTag">v1.21 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+    <div class="credit" id="versionTag">v1.22 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
   </header>
 
   <div class="panel">
@@ -740,7 +759,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.21";
+  const APP_VERSION = "1.22";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1737,7 +1756,14 @@
     if(!scene || !heightmap) return;
     const cols = heightmap[0].length;
     const boardW = params.boardW;
-    const frac = Math.max(0, Math.min(1, t / audioDuration));
+    // Board length represents [trimStart, trimEnd] since v1.21, not the
+    // whole file — t/audioDuration was the pre-trim formula and put the
+    // marker at the wrong spot on the (now proportionally shrunk) board
+    // the moment trim no longer matched the full file exactly. Same
+    // "position within the selection, not within the file" fix as the
+    // seek bar's own bounds.
+    const trimDur = Math.max(0.01, trimEnd - trimStart);
+    const frac = Math.max(0, Math.min(1, (t - trimStart) / trimDur));
     const ix = Math.max(0, Math.min(cols-1, Math.round(frac * (cols-1))));
     const worldX = frac * boardW - boardW/2;
     const profile = computeColumnProfile(ix);
@@ -1753,7 +1779,10 @@
     playheadLine.renderOrder = 998;
     scene.add(playheadLine);
 
-    $("playTime").textContent = fmtTime(t) + " / " + fmtTime(audioDuration);
+    // Shows absolute position in the file (matches the seek bar's own
+    // min/max, which are [trimStart, trimEnd]) — trimEnd as "total", not
+    // the full file's audioDuration, since that's not what's playing.
+    $("playTime").textContent = fmtTime(t) + " / " + fmtTime(trimEnd);
   }
 
   function fmtTime(s){
