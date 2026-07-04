@@ -5,8 +5,11 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.28 — full changelog is a comment block at the top of
+**Version:** v1.30 — full changelog is a comment block at the top of
 `index.html` (source of truth if this file drifts out of date).
+Tablet-friendly (iPad-width screens): the 3D viewport supports one-finger
+drag to orbit and two-finger pinch to zoom, and the left panel narrows at
+tablet widths. Phones are not a target.
 
 ## Pipeline
 

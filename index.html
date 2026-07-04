@@ -11,6 +11,24 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.30 — the in-app Help walkthrough never got updated when Reach
+          shipped in v1.28: the "Viewport & navigation" section listed
+          Home/Top/Front/Right, 0,0, Section, and X-Ray but not Reach,
+          and the Quick start step only mentioned Section/X-Ray. Added
+          a Reach entry to both. The per-button tooltip (data-tip on
+          the nav button itself) was already correct — only the help
+          modal was stale.
+  v1.29 — tablet support. The 3D viewport's orbit/zoom only listened for
+          mouse events (mousedown/mousemove/wheel), so touch devices
+          couldn't interact with it at all. Added a parallel touch
+          handler (kept fully separate from the mouse one so desktop is
+          untouched): one-finger drag orbits, two-finger pinch zooms,
+          touch-action:none on the viewport stops the page from
+          scrolling under a drag. Also added a max-width:1024px media
+          query (the only @media rule in the file) that narrows the
+          fixed 340px left panel to 280px at tablet widths so the
+          viewport keeps usable room; desktop layout above 1024px is
+          unchanged. Phones intentionally not targeted.
   v1.28 — tool reachability check: a new REACH toggle in the nav
           toolbar highlights areas the finish bit can't physically
           reach. Real CNC limitation, not a bug report — a round-nosed
@@ -569,7 +587,7 @@
   .console .warn{ color: var(--warn); }
 
   main{ grid-column:2; grid-row:2; position:relative; background: radial-gradient(ellipse at 50% 30%, #141412 0%, #0a0a0a 70%); }
-  #viewport{ position:absolute; inset:0; }
+  #viewport{ position:absolute; inset:0; touch-action: none; }
   .hint{
     position:absolute; top:16px; left:16px; font-family: var(--mono); font-size:10px; color: var(--ink-dim);
     text-transform:uppercase; letter-spacing:.1em; pointer-events:none;
@@ -775,6 +793,14 @@
   }
   input.valInput:focus{ outline:none; border-bottom:1px solid var(--accent); }
   .unitSuffix{ color:var(--ink-dim); }
+
+  /* Tablet breakpoint only (~768-1024px, e.g. iPad portrait/landscape).
+     Narrows the fixed left panel so the 3D viewport keeps a usable amount
+     of room on a tablet-width screen. Desktop layout above is untouched;
+     phones (<768px) are intentionally not targeted. */
+  @media (max-width: 1024px) {
+    .app{ grid-template-columns: 280px 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -786,7 +812,7 @@
     </div>
     <div class="headerRight">
       <button type="button" class="helpBtn" id="helpBtn" data-tip="Full walkthrough: workflow, every control, tips from real testing.">? help</button>
-      <div class="credit" id="versionTag">v1.28 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+      <div class="credit" id="versionTag">v1.30 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
     </div>
   </header>
 
@@ -806,7 +832,7 @@
             <li>Analysis runs in the background (a Web Worker, so the page won't freeze) &mdash; watch the status readout for progress on longer files.</li>
             <li>Adjust Length/Width, Max Depth, Max Frequency in Simple mode &mdash; or switch to Advanced for bit sizes, feed rates, and roughing.</li>
             <li>Optionally trim to a window of the track (see Trim below) &mdash; the board resizes to match that window, it doesn't stretch a short clip to fill a fixed size.</li>
-            <li>Check the 3D preview: orbit, use Section or X-Ray to look inside, hit Play to hear it while a marker traces the relief in sync.</li>
+            <li>Check the 3D preview: orbit, use Section or X-Ray to look inside, Reach to flag spots the bit can't fully carve, hit Play to hear it while a marker traces the relief in sync.</li>
             <li>Download G-code for the CNC, and/or STL to sanity-check the shape in a slicer or CAM tool first.</li>
           </ol>
         </details>
@@ -868,6 +894,7 @@
             <dt>0,0</dt><dd>Toggles the machine-origin marker: shows exactly where G-code X0/Y0 sits, colored to the ISO 841/DIN CNC convention (X=red, Y=green, Z=blue) &mdash; not this app's own accent palette, since mixing up axis colors is exactly the kind of thing worth avoiding.</dd>
             <dt>Section</dt><dd>Cuts the board along X at a position you drag or type, with a red profile trace showing the actual depth at that line.</dd>
             <dt>X-Ray</dt><dd>Ghosts the stock material so you can see straight through to the carved surface, plus a wireframe of the true board envelope (L&times;W&times;depth, real mm).</dd>
+            <dt>Reach</dt><dd>Highlights spots the finish bit can't physically reach &mdash; a real CNC limitation, not a bug. A round-nosed bit of radius r can't get into a valley narrower than its own diameter; the tool body hits a neighboring peak before the cutting edge reaches the bottom. Off, the preview shows the idealized target surface; on, flagged areas will actually come out shallower/wider than shown, no matter how many passes you run. The readout under the toolbar reports what percent of the surface is affected for the current finish bit size.</dd>
           </dl>
         </details>
 
@@ -1058,7 +1085,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.28";
+  const APP_VERSION = "1.30";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1968,6 +1995,47 @@
       e.preventDefault();
       orbit.radius = Math.max(60, Math.min(1400, orbit.radius + e.deltaY*0.4));
     }, {passive:false});
+
+    // Touch support (tablet): one-finger drag orbits, two-finger pinch zooms.
+    // Kept fully separate from the mouse handlers above so desktop mouse
+    // behavior is untouched. Uses Touch events (not Pointer Events) so a
+    // single finger drag doesn't also fire synthetic mouse events that would
+    // double up with the mousedown/mousemove handlers on some browsers.
+    let touchDragging = false, pinchDist = null;
+    function touchDist(t0, t1){
+      const dx = t0.clientX-t1.clientX, dy = t0.clientY-t1.clientY;
+      return Math.sqrt(dx*dx + dy*dy);
+    }
+    container.addEventListener("touchstart", e=>{
+      autoRotate = false;
+      if(e.touches.length === 1){
+        touchDragging = true;
+        lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+      } else if(e.touches.length === 2){
+        touchDragging = false;
+        pinchDist = touchDist(e.touches[0], e.touches[1]);
+      }
+    }, {passive:true});
+    container.addEventListener("touchmove", e=>{
+      if(e.touches.length === 1 && touchDragging){
+        e.preventDefault();
+        const t = e.touches[0];
+        const dx = t.clientX-lastX, dy = t.clientY-lastY;
+        lastX = t.clientX; lastY = t.clientY;
+        orbit.theta -= dx*0.006;
+        orbit.phi = Math.max(0.08, Math.min(Math.PI/2-0.02, orbit.phi - dy*0.006));
+      } else if(e.touches.length === 2 && pinchDist !== null){
+        e.preventDefault();
+        const d = touchDist(e.touches[0], e.touches[1]);
+        orbit.radius = Math.max(60, Math.min(1400, orbit.radius - (d-pinchDist)*1.2));
+        pinchDist = d;
+      }
+    }, {passive:false});
+    container.addEventListener("touchend", e=>{
+      if(e.touches.length < 1) touchDragging = false;
+      if(e.touches.length < 2) pinchDist = null;
+    }, {passive:true});
+    container.addEventListener("touchcancel", ()=>{ touchDragging = false; pinchDist = null; }, {passive:true});
 
     window.addEventListener("resize", ()=>{
       camera.aspect = container.clientWidth/container.clientHeight;
