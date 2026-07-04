@@ -11,6 +11,26 @@
   roughing + finishing G-code toolpaths. Runs entirely client-side.
 
   CHANGELOG
+  v1.27 — machining time estimate now accounts for per-row plunge time,
+          closing a real gap discovered by comparing this app's own
+          estimate against an actual G54.APP simulation of its G-code
+          output: app said 120 min, G54.APP's real toolpath simulation
+          said 139.6 min (2:19:36) for the same file. Root cause:
+          emitPass() retracts to safeZ and replunges at the START of
+          EVERY row — not a continuous zigzag that skips replunging
+          between rows — and plunge happens at the plunge feedrate,
+          usually much slower than the cutting feed. The old estimate
+          only counted cutting-move distance ÷ feed, missing this
+          entirely. Added plungeDist (maxDepth + safeZ, a worst-case
+          per-row assumption) × passRows ÷ plunge rate to both the
+          finishing pass and every roughing level. Reconstructing the
+          old formula with this file's actual parameters matched the
+          previously-displayed 120 min almost exactly (119.9),
+          confirming the parameters used for validation were right;
+          the new formula comes out to 136.0 min — cutting the error
+          against the real G54.APP number from 14.0% down to 2.6%.
+          Verified the actual shipped function (not just a scratch
+          test) produces this exact number before shipping.
   v1.26 — in-app Help documentation. A "? help" button (header, top
           right, same placement pattern as Modulor Massing's HELP
           button) opens a modal with a full walkthrough: quick start,
@@ -723,7 +743,7 @@
     </div>
     <div class="headerRight">
       <button type="button" class="helpBtn" id="helpBtn" data-tip="Full walkthrough: workflow, every control, tips from real testing.">? help</button>
-      <div class="credit" id="versionTag">v1.26 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+      <div class="credit" id="versionTag">v1.27 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
     </div>
   </header>
 
@@ -993,7 +1013,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.26";
+  const APP_VERSION = "1.27";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
@@ -1842,15 +1862,29 @@
   function updateStats(rows, cols){
     $("s_dur").textContent = (trimEnd - trimStart).toFixed(1) + "s";
     $("s_grid").textContent = rows + " x " + cols;
-    const pathMm = rows * params.boardW; // approx: one traverse per row
-    const finishMin = pathMm / Math.max(params.feed,1);
+
+    // Worst-case per-row plunge distance — emitPass() retracts to safeZ
+    // and replunges at the start of EVERY row (see the "first" branch:
+    // G0 to safeZ, then G1 down to the cut depth at the plunge feedrate).
+    // That's not a rounding error to ignore: plunge is usually much
+    // slower than the cutting feed, and it happens once per row, not
+    // once per pass. Validated against a real G54.APP simulation of this
+    // app's own G-code output: adding this closed a 14.0% estimate error
+    // down to 2.6%.
+    const plungeDist = params.maxDepth + params.safeZ;
+    function passTime(passRows, pathPerRowMm, feedRate){
+      const cutTime = (pathPerRowMm * passRows) / Math.max(feedRate, 1);
+      const plungeTime = (plungeDist * passRows) / Math.max(params.plunge, 1);
+      return cutTime + plungeTime;
+    }
+
+    const finishMin = passTime(rows, params.boardW, params.feed);
     let roughMin = 0;
     if($("roughing").checked){
       const roughStepover = params.roughBit*0.5;
       const rRows = Math.max(4, Math.round(params.boardH/roughStepover));
-      const roughPathMm = rRows * params.boardW;
       const levels = roughingLevelCount();
-      roughMin = (roughPathMm * levels) / Math.max(params.feed*1.2, 1);
+      roughMin = passTime(rRows, params.boardW, params.feed*1.2) * levels;
     }
     $("s_time").textContent = (finishMin+roughMin).toFixed(0) + " min";
   }
