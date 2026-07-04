@@ -5,7 +5,7 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.27 — full changelog is a comment block at the top of
+**Version:** v1.28 — full changelog is a comment block at the top of
 `index.html` (source of truth if this file drifts out of date).
 
 ## Pipeline
@@ -20,8 +20,11 @@ always exports mm (`G21`) regardless of the display unit toggle.
 
 Viewport has a nav toolbar (Home/Top/Front/Right, machine-origin
 marker, a section cut you push/pull along X with a red profile trace at
-the cut, and an X-ray toggle that ghosts the stock plus a wireframe of
-the true board envelope) and playback (Play/Stop, seek bar, ±5s nudge)
+the cut, an X-ray toggle that ghosts the stock plus a wireframe of
+the true board envelope, and a reach toggle that highlights areas the
+finish bit can't physically reach — narrow valleys tighter than the
+bit diameter, based on real ball-end-tool CAM theory, not just a
+visual guess) and playback (Play/Stop, seek bar, ±5s nudge)
 with a synced marker
 tracing the relief in time with the sound. A trim range (drag handles +
 numeric fields) selects which window of the track feeds the relief —
