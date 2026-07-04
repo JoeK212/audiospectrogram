@@ -5,51 +5,25 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.30 — full changelog is a comment block at the top of
-`index.html` (source of truth if this file drifts out of date).
-Tablet-friendly (iPad-width screens): the 3D viewport supports one-finger
-drag to orbit and two-finger pinch to zoom, and the left panel narrows at
-tablet widths. Phones are not a target.
+**Version:** v1.30
 
-## Pipeline
-
-Audio → STFT spectrogram (runs in a Web Worker, off the main thread —
-the UI stays responsive during analysis, with live progress in the
-status readout; falls back to synchronous if Worker isn't available)
-→ heightmap → three.js preview + G-code
-(multi-level stepdown roughing + finishing pass) + STL export. Time →
-X, frequency → Y, loudness → Z depth. Board always stored in mm; G-code
-always exports mm (`G21`) regardless of the display unit toggle.
-
-Viewport has a nav toolbar (Home/Top/Front/Right, machine-origin
-marker, a section cut you push/pull along X with a red profile trace at
-the cut, an X-ray toggle that ghosts the stock plus a wireframe of
-the true board envelope, and a reach toggle that highlights areas the
-finish bit can't physically reach — narrow valleys tighter than the
-bit diameter, based on real ball-end-tool CAM theory, not just a
-visual guess) and playback (Play/Stop, seek bar, ±5s nudge)
-with a synced marker
-tracing the relief in time with the sound. A trim range (drag handles +
-numeric fields) selects which window of the track feeds the relief —
-playback previews exactly that window, and board length shrinks/grows
-proportionally to match (a 2s clip out of a 6.3s file at a 250mm
-baseline becomes ~79mm, not stretched to fill 250mm). Presets
-(save/load/delete,
-named, stored in this browser only) capture every tunable value so you
-can snap back to a known-good setup. A "? help" button in the header
-opens a full in-app walkthrough (workflow, every control, tips learned
-from real testing this project) — same "?" pattern already used per-field.
+Audio → spectrogram → heightmap → three.js preview + G-code/STL export.
+Tablet-friendly (drag to orbit, pinch to zoom, panel narrows at iPad
+widths); desktop is unchanged. See **[EXTENDED.md](./EXTENDED.md)** for
+the full feature walkthrough, viewport controls, presets, and changelog
+highlights — or the comment block at the top of `index.html`, which is
+the source of truth if these drift out of date.
 
 ## Files
 
 - `index.html` — the whole app (three.js embedded inline, no CDN dep).
 - `netlify.toml` — static site, no build step.
 - `audit_deploy.js` — **local only, not committed.** Run before shipping:
-  `node audit_deploy.js index.html`. Every check exists because of a
-  real bug hit during development.
+  `node audit_deploy.js index.html`.
 
 ## Known limitations
 
 - Codec support depends on the browser's native decoder.
+- Touch support targets tablets; phone-width screens aren't a focus.
 
 — Joe.K · axisbim.io
