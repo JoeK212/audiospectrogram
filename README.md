@@ -5,7 +5,7 @@ G-code to carve it. Single-file HTML/JS, runs entirely in the browser —
 nothing is uploaded anywhere.
 
 **Live:** https://audiospectrogramcnc.netlify.app/
-**Version:** v1.30
+**Version:** v1.31
 
 Audio → spectrogram → heightmap → three.js preview + G-code/STL export.
 Tablet-friendly (drag to orbit, pinch to zoom, panel narrows at iPad
@@ -24,6 +24,6 @@ the source of truth if these drift out of date.
 ## Known limitations
 
 - Codec support depends on the browser's native decoder.
-- Touch support targets tablets; phone-width screens aren't a focus.
+- Touch support targets tablets; phone-width screens show a "please use a tablet or desktop" message instead of the app.
 
 — Joe.K · axisbim.io

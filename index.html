@@ -5,10 +5,428 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sound / Relief — audio to CNC toolpath</title>
 <!--
-  SOUND / RELIEF — Audio to CNC Toolpath
+  sound / relief — Joe.K · axisbim.io
+
   Converts an audio file's spectrogram into a 3D relief and exports
   roughing + finishing G-code toolpaths. Runs entirely client-side.
-  Joe.K · axisbim.io
+
+  CHANGELOG
+  v1.31 — phone gate. This app was made tablet-friendly in v1.29, but
+          "not a target" for phones was only ever a design intent, not
+          an enforced one — under 768px the two-panel layout + 3D
+          viewport would just render broken/unusable rather than say
+          so. Added a full-screen message (icon, title, explanation,
+          credit line — same pattern as the gate already used on the
+          Modulor Mondrian project) shown below a 767px media query,
+          with the real .app underneath hidden via display:none at
+          that width. Pure CSS, no JS: nothing to keep in sync, and it
+          responds live to window resize/rotation like the rest of the
+          responsive layout. Tablet (768-1024px) and desktop are
+          unaffected — this only fires below the existing tablet
+          breakpoint.
+  v1.30 — the in-app Help walkthrough never got updated when Reach
+          shipped in v1.28: the "Viewport & navigation" section listed
+          Home/Top/Front/Right, 0,0, Section, and X-Ray but not Reach,
+          and the Quick start step only mentioned Section/X-Ray. Added
+          a Reach entry to both. The per-button tooltip (data-tip on
+          the nav button itself) was already correct — only the help
+          modal was stale.
+  v1.29 — tablet support. The 3D viewport's orbit/zoom only listened for
+          mouse events (mousedown/mousemove/wheel), so touch devices
+          couldn't interact with it at all. Added a parallel touch
+          handler (kept fully separate from the mouse one so desktop is
+          untouched): one-finger drag orbits, two-finger pinch zooms,
+          touch-action:none on the viewport stops the page from
+          scrolling under a drag. Also added a max-width:1024px media
+          query (the only @media rule in the file) that narrows the
+          fixed 340px left panel to 280px at tablet widths so the
+          viewport keeps usable room; desktop layout above 1024px is
+          unchanged. Phones intentionally not targeted.
+  v1.28 — tool reachability check: a new REACH toggle in the nav
+          toolbar highlights areas the finish bit can't physically
+          reach. Real CNC limitation, not a bug report — a round-nosed
+          bit of radius r cannot reach into a valley narrower than its
+          own diameter; the tool body contacts a neighboring peak
+          before the cutting edge reaches the bottom. What the preview
+          shows is the idealized target surface; this shows where the
+          physically cut surface will actually diverge from it.
+          Deliberately visualize-only (checked against the finish bit
+          only) — not applied to the exported G-code/STL. Correcting
+          the actual output would mean deciding HOW to correct it
+          (flatten? round over? leave proud?) — those are real artistic
+          choices this tool shouldn't make silently on the user's
+          behalf. A warning layer lets the user decide: smaller finish
+          bit, less max depth, less max frequency (fewer narrow
+          features), or accept it as intentional softening.
+          Implementation: grayscale dilation of the target surface by a
+          ball structuring element (standard ball-end-tool CAM theory)
+          — for each point, scan every neighbor within the bit's radius
+          and find the shallowest Z the ball is forced to stop at
+          because that neighbor must stay higher. Unreachable areas get
+          blended toward a warning red on the terrain itself, plus a
+          summary readout ("X% of surface can't be fully reached,
+          worst case Ymm shallow"). Verified against hand-derived
+          analytical cases before shipping: a 1mm-wide slot under a
+          6mm bit (correctly flagged ~98% unreachable), a 30mm-wide
+          valley under the same bit (correctly fully reachable at
+          center), and the smooth falloff of the deficit as a point
+          moves away from a wall, cross-checked against independent
+          hand recalculation at each step — not just trusted on read.
+          Performance: worst case (max 600mm board + max 12mm bit) runs
+          ~1.6s on the main thread; typical settings (250mm board, 3mm
+          bit) run in ~18ms. Rather than a full Web Worker migration
+          (disproportionate for a bounded worst case, unlike arbitrary
+          audio file sizes), the toggle defers the computation one tick
+          so its own "checking reachability..." status message can
+          actually paint before the heavy work blocks — silent freezes
+          are bad even when rare and bounded.
+  v1.27 — machining time estimate now accounts for per-row plunge time,
+          closing a real gap discovered by comparing this app's own
+          estimate against an actual G54.APP simulation of its G-code
+          output: app said 120 min, G54.APP's real toolpath simulation
+          said 139.6 min (2:19:36) for the same file. Root cause:
+          emitPass() retracts to safeZ and replunges at the START of
+          EVERY row — not a continuous zigzag that skips replunging
+          between rows — and plunge happens at the plunge feedrate,
+          usually much slower than the cutting feed. The old estimate
+          only counted cutting-move distance ÷ feed, missing this
+          entirely. Added plungeDist (maxDepth + safeZ, a worst-case
+          per-row assumption) × passRows ÷ plunge rate to both the
+          finishing pass and every roughing level. Reconstructing the
+          old formula with this file's actual parameters matched the
+          previously-displayed 120 min almost exactly (119.9),
+          confirming the parameters used for validation were right;
+          the new formula comes out to 136.0 min — cutting the error
+          against the real G54.APP number from 14.0% down to 2.6%.
+          Verified the actual shipped function (not just a scratch
+          test) produces this exact number before shipping.
+  v1.26 — in-app Help documentation. A "? help" button (header, top
+          right, same placement pattern as Modulor Massing's HELP
+          button) opens a modal with a full walkthrough: quick start,
+          every Simple/Advanced control, Trim, Playback, Presets
+          (including the file:// storage caveat), Viewport/Navigation
+          (including the ISO 841 axis color convention), Export (G-code
+          vs STL, what each is actually for), and a "tips/limits/things
+          learned the hard way" section drawing directly from this
+          session's real bugs (the clamp-warning behavior, the 3.2x
+          preview exaggeration vs real STL/G-code depth, the Worker-
+          based analysis and what it does/doesn't fix for large files).
+          Built as plain <details>/<summary> accordion sections — no
+          new dependencies, consistent with the rest of the app's
+          hand-rolled, single-file approach. Escape/backdrop-click/×
+          all close it, matching the interaction pattern already
+          established by the presets dropdown.
+  v1.25 — swept the codebase for the same bug class fixed in v1.24
+          (typed values silently clamped with no feedback) rather than
+          treating max depth as an isolated fix. Found one more real
+          instance: the trim start/end numeric fields go through
+          clampTrim() the same way, with the same silent-substitution
+          problem — type a trim start past the end of the file, or a
+          negative value, and it'd clamp without saying so. Same fix
+          applied: a clear warning naming what got clamped and why.
+          Checked every other Math.min/Math.max clamp in the codebase
+          (camera drag/zoom, section position, playhead, STFT frame
+          indices) — all of those are driven by mouse drag or internal
+          geometry math, not typed text input, so clamping there is
+          normal/expected interactive behavior (like a scrollbar
+          hitting its end) and doesn't need the same treatment.
+          Verified the trim fix against three scenarios (out-of-range
+          start, valid in-range value, negative end) before shipping.
+  v1.24 — fixed numeric fields silently clamping instead of accepting
+          typed values, reported as "I enter 1 or any value, it returns
+          0.787" on max depth in inches mode. Root cause: max depth's
+          range is 1-20mm (mm always, regardless of display unit), and
+          typing "1" while in inches mode means 1 inch = 25.4mm, which
+          exceeds the 20mm ceiling — so it silently substituted 20mm
+          (=0.787in) with zero indication a limit was hit at all. Every
+          value above the max looked identical to "my input is being
+          ignored." Now logs a clear warning ("max depth clamped to
+          0.787in (allowed range 0.039–0.787in)") whenever a typed value
+          actually gets clamped, for every numeric field, not just max
+          depth. Added labels to fieldDefs for these messages. Verified
+          against the exact reported scenario (max depth, inches, typing
+          "1") plus two more: an in-range value that should NOT trigger
+          a clamp message, and a too-low value clamping to the minimum
+          with its own correct message.
+  v1.23 — STFT analysis moved to a Web Worker, off the main thread. A
+          140MB FLAC test confirmed the real cost this session flagged:
+          the synchronous frame-by-frame FFT loop froze the tab for
+          however long analysis took, with zero feedback beyond the
+          initial "running STFT..." log line. Now runs in a worker with
+          live progress ("analyzing 43%..." in the status readout) while
+          the UI stays fully responsive. Falls back to the original
+          synchronous path if Worker isn't available (old browsers,
+          restrictive contexts) or if worker creation itself throws.
+          The actual STFT math (fft/hannWindow/frame loop) lives in ONE
+          function (runSTFTCore) used both ways — injected into the
+          worker via .toString() and called directly for the fallback —
+          instead of two copies that could drift apart. Switched
+          dbGridFull's internal representation from nested Float32Array-
+          per-frame to one flat Float32Array (frame-major), reconstructed
+          into the same [frame][bin] access pattern on the main thread
+          afterward — flat data transfers to/from a worker with zero
+          copy via the postMessage transfer list; nested arrays would
+          need a slow structured-clone walk. Added a stale-worker guard:
+          if a second file loads while the first's analysis is still
+          in flight, the old worker's results are ignored entirely
+          rather than potentially overwriting the new file's state.
+          Verified before shipping: the refactored flat-array algorithm
+          produces byte-identical output to the original nested-array
+          version (max diff 0 across 30,267 test values), and the
+          generated worker source is syntactically valid.
+  v1.22 — fixed the playhead marker not starting at the origin (0,0)
+          when playback begins. v1.21 made board length represent
+          [trimStart, trimEnd] instead of the whole file, but
+          updatePlayheadAt() still computed its board position with
+          frac = t/audioDuration — the pre-trim formula, now measuring
+          against the wrong denominator. At t=trimStart the marker
+          landed wherever trimStart happened to fall in the FULL file's
+          timeline, not at the start of the (now proportionally shrunk)
+          board. Fixed to frac = (t-trimStart)/(trimEnd-trimStart),
+          matching the same "position within the selection" logic the
+          seek bar already used. Also fixed the playTime readout
+          showing the full file's duration as "total" instead of
+          trimEnd — cosmetically correct in the exact case that exposed
+          the marker bug (trimEnd happened to equal audioDuration) but
+          would have been wrong for any trim that doesn't reach the end
+          of the file. Verified against the user's own numbers: old
+          formula put t=trimStart at worldX=14.79 (nowhere near the
+          edge); fixed formula puts it at exactly -40.5, the left edge,
+          matching the origin corner.
+  v1.21 — board length is now a function of trim duration, not a fixed
+          independent value. v1.19/v1.20 always stretched the trimmed
+          window to fill the full board length regardless of how short
+          the clip was; a real 4.3-6.3s trim of the user's own testing
+          made clear that's not what "isolate an area of the track"
+          means — it means CROP, not stretch: a 2s clip out of a 6.3s
+          file at a 250mm baseline should become a ~79mm board, sized
+          and positioned proportionally, not a 250mm board with 2
+          seconds of audio stretched across all of it.
+          mmPerSecond is the single source of truth for the scale —
+          established once per file (length field's value ÷ full
+          duration), reapplied on every trim change (new effective
+          length = mmPerSecond × trim duration), and recalibrated if the
+          length field is edited directly (so a manual edit always means
+          "this many mm for THIS trim", not something that gets silently
+          overwritten next trim change). Loading a preset with audio
+          already present resets trim to full and recalibrates from the
+          preset's own length — otherwise a stale partial trim would
+          immediately fight the preset's intended board size. Guards
+          against the length slider's native min clamping a very short
+          trim's computed length to the wrong value (widens the floor
+          rather than let it clamp silently). Verified the full mechanism
+          standalone against the user's own numbers (250mm/6.3s baseline,
+          4.3-6.3s trim → 79.37mm, matching their own worked example
+          exactly) plus reset-to-full exactness, a very short trim edge
+          case, and manual-edit recalibration — all before shipping.
+  v1.20 — playback now previews the trim selection, not the whole file.
+          v1.19 shipped trim as independent of Play/Stop/seek on
+          purpose, but that meant pressing Play always played the full
+          track regardless of the trim window — not what "isolate an
+          area of the track" actually needs; you couldn't hear what you
+          selected. Play now starts at trimStart, stops at trimEnd, seek
+          bar bounds are [trimStart, trimEnd], nudge clamps within the
+          window, Stop resets to trimStart. Changing the trim (drag,
+          type, reset) snaps playback back into the new window if the
+          current position falls outside it — via a shared
+          applyTrimChange() helper used by all three trim-change entry
+          points instead of three copies of the same sync logic. Fixed
+          stale code comments/tooltips from v1.19 that described the old
+          "independent of playback" design. Verified five interaction
+          scenarios standalone (fresh play snapping into the window,
+          end-of-window stop, nudge clamping at both bounds, resetting
+          trim while paused inside vs. outside the old window) before
+          shipping.
+  v1.19  — trim range: pick a window of the track to feed the relief,
+          instead of always the whole file. Dual drag-handle bar plus
+          numeric start/end fields (in seconds), reset-to-full button.
+          Deliberately independent of playback — Play/Stop/seek above
+          still cover the whole file; trim only changes what
+          buildHeightmapFromCache() resamples into the board. Hoisted
+          the STFT frame constants (nperseg/noverlap/hop) to module
+          scope so the trim-to-frame math shares one definition with
+          analyzeSTFT() instead of risking a second copy drifting out
+          of sync. Board-width mapping is now [trimStart, trimEnd]
+          instead of always [0, full duration] — trimStart/trimEnd
+          default to 0/audioDuration, so this is a strict
+          generalization of the old behavior, not a special case.
+          "est. duration" stat now shows the trimmed span, since that's
+          what's actually being carved. Verified frame-mapping math and
+          clamp logic (crossed handles, out-of-bounds drags, near-end
+          trims) standalone before shipping.
+  v1.18 — seek bar and ±5s nudge buttons, since Play/Stop alone had no
+          way to move around within a clip. Seek bar: pointerdown pauses
+          any live playback first (Web Audio can't reposition a running
+          source — it's stop-and-recreate either way), input events give
+          a live drag preview (playhead + time, no audio state touched),
+          change on release commits the position and resumes playback if
+          it was playing before. Fixed a latent bug this surfaced:
+          startPlayback() never stopped an existing source before
+          starting a new one — harmless when only ever called from a
+          clean stopped/paused state, but seek/nudge now call it to
+          restart from a new position while already playing, which
+          would have left the old source running underneath the new
+          one. Verified clamping math standalone (seek/nudge bounds at
+          both ends of the clip) before shipping.
+  v1.17 — relabeled board "width"/"height" to "length"/"width". Having
+          "height" (a horizontal Y-axis dimension) sitting right above
+          "max depth" (the actual Z axis) read as if height were the
+          vertical one — standard CNC/stock convention is length x width
+          for the footprint, height/thickness reserved for the vertical
+          dimension. Matches the L×W×depth wording already used in the
+          X-ray readout. Label-only change — internal param names
+          (boardW/boardH) and field ids (bw/bh) untouched, so G-code,
+          STL, and preset storage are all unaffected.
+  v1.16 — systematic audit of the v1.15 custom dropdown rewrite. Found
+          and fixed a stray extra closing brace left over from
+          restructuring the "My presets" section (caught by manual
+          review, not the audit script — worth being honest that the
+          checker doesn't do full AST parsing). Also found
+          .customSelectEmpty was dead CSS — defined but never applied
+          anywhere — so wired it up properly: the "My presets" group
+          now always renders and shows "none saved yet" when empty,
+          instead of just not existing. Swept for duplicate function
+          declarations, double-bound listeners, and leftover native-
+          select artifacts from the v1.15 rewrite — all clean.
+  v1.15 — replaced the native <select> preset dropdown with a custom
+          div-based listbox. The v1.14 fix made option text legible but
+          the popup itself was still the OS/browser-rendered native
+          dropdown (plain white box, system font, blue highlight) —
+          that's not reachable from CSS in any browser, so it always
+          looked like a stock Windows/Chrome listbox dropped into an
+          otherwise fully custom dark UI. Now fully our own markup:
+          same dark background, same monospace font, accent-color hover,
+          "Starter presets"/"My presets" grouping — matches the rest of
+          the app instead of fighting the platform's own widget chrome.
+          Same behavior otherwise (click an option to load immediately,
+          same disabled-state handling when storage isn't available).
+  v1.14 — fixed illegible preset dropdown options. The <select> used
+          color:var(--ink) (light cream, meant for its dark closed-state
+          background), but a native dropdown popup renders on its own
+          light/white background regardless of the select's own
+          transparent/dark styling — that's OS/browser-controlled, not
+          reachable from the select's CSS. Result: near-invisible pale
+          text on white. Options/optgroups now get their own explicit
+          dark-on-light colors instead of inheriting the select's.
+  v1.13 — added 4 built-in starter presets (Quick Test, Decorative
+          Shallow, Deep Relief, Fine Detail) — same role as Modulor
+          Massing's Tower/Podium/Courtyard: ready-made starting points,
+          not an empty save-your-own list. Fixed set, not stored in
+          localStorage, not deletable, shown in their own "Starter
+          presets" optgroup separate from "My presets". Every value
+          checked against its actual slider min/max before shipping —
+          verified standalone, none silently clamp on load. Saving a
+          user preset under a starter preset's exact name is blocked
+          with a warning rather than silently shadowing it.
+  v1.12 — presets weren't showing after saving because localStorage on
+          file:// pages (i.e. every locally re-downloaded copy of this
+          app, rather than the deployed site) can silently no-op writes
+          without throwing an exception — savePresetStore() was trusting
+          "didn't throw" as proof the save worked, which isn't true in
+          that environment. Now verifies every write by reading it
+          straight back, and runs a self-test at startup that disables
+          the whole presets section (with an explanatory tooltip) if
+          storage genuinely isn't persisting, instead of letting someone
+          save a preset that quietly vanishes. Verified against three
+          simulated localStorage behaviors (working, silent no-op,
+          throwing) before shipping.
+  v1.11 — STL bottom face collapsed to a single flat quad instead of one
+          triangle pair per grid cell. The bottom is perfectly flat
+          everywhere, so subdividing it at the top surface's resolution
+          was ~50% of the file's triangle count for zero visual or
+          volumetric benefit. 100x250 grid: 99,996 tri / 4.77MB before,
+          50,696 tri / 2.42MB after — same solid, same watertightness at
+          the outer boundary, roughly half the file size. Top surface
+          (the actual relief) and the four side walls are untouched —
+          the sides carry real relief detail along their top edge and
+          can't be simplified the same way without losing that detail.
+  v1.10 — added a Stop button next to Play. stopPlayback() already existed
+          internally (used when a clip finishes or a new file loads) but
+          had no button wired to it, so pausing was the only way to stop
+          and there was no way to reset back to the start. Stop now does
+          both: halts the audio node and resets the playhead to 0:00.
+  v1.9  — UI ironing-out pass, using Modulor Massing's left panel as a
+          reference: header restructured to a title+subtitle stack
+          (matches Modulor's convention) instead of split left/right;
+          section-label dividers get a bottom rule; Simple/Advanced
+          switched from a filled segmented control to underline tabs
+          (mm/in kept boxed — it's a real setting, not a view switch);
+          every field/toggle with a tooltip now shows a small "?" badge
+          for discoverability, generated once from existing [data-tip]
+          attributes rather than hand-added to all 12 field blocks (so
+          it can't drift if a tooltip is added/removed later).
+  v1.8  — preset save/load (name it, save it, pick it from a dropdown
+          later, delete when done). Stored in localStorage, this browser
+          only — matches the app's "nothing leaves your machine" ethos,
+          same as the audio processing itself. Presets capture every
+          board/carve/tooling/motion value plus invert, roughing, and
+          the mm/in display preference. Stores raw mm-space values (the
+          same domain the sliders already operate in via bindField, no
+          separate unit-conversion path to get wrong). Tolerates presets
+          missing newer fields (e.g. one saved before "stepdown"
+          existed) without throwing or clobbering unrelated params —
+          verified via round-trip test.
+  v1.7  — real multi-level stepdown roughing, replacing the single-pass
+          "clip to allowance" roughing that only ever cut in one plunge.
+          New "rough stepdown" param (Advanced) controls max Z removed
+          per pass; number of levels and each level's Z are computed
+          from stepdown/maxDepth/allowance via a shared helper
+          (roughingLevelCount) so the G-code and the machining-time
+          estimate can't disagree. Each level cuts to
+          max(levelZ, roughTarget(h)) — flat where material is still
+          deeper than that level, following the relief's own contour
+          anywhere it's already shallower, so no pass ever gouges past
+          a point's own rough target. Verified: monotonic depth per
+          pass, no single pass exceeds configured stepdown, final pass
+          reaches the true rough target everywhere.
+  v1.6  — UI polish: nav buttons now have a real disabled state (opacity +
+          cursor, hover no longer implies clickability) instead of looking
+          identical to enabled ones; range sliders get Firefox thumb/track
+          styling to match the existing webkit styling (previously fell
+          back to the browser-default blue slider); nav button hover now
+          fades instead of snapping, matching .drop/.btn.ghost elsewhere;
+          fixed the playTools toolbar's top+margin-top position stacking
+          hack in favor of one explicit offset.
+  v1.5  — basic 3D navigation tools: Home/Top/Front/Right view presets,
+          a machine-origin (X0/Y0) marker matching the G-code/STL
+          coordinate frame (not the centered preview frame), and a
+          section push/pull tool — a clip plane you drag through the
+          board to check the actual carve depth at any point before
+          cutting. All additive to the viewport; doesn't touch the
+          existing orbit drag/zoom handling.
+  v1.4  — STL export alongside G-code, so the relief can be sanity-checked
+          in a slicer or other CAM tool before committing wood. Built
+          straight from the heightmap grid in real board units/mm (same
+          coordinates and depths as the G-code, not the exaggerated/
+          rotated three.js preview), and does not touch mesh/scene —
+          works even if the 3D preview failed to build, same as G-code.
+          Produces a closed/manifold solid (top relief + flat base +
+          side walls) since slicers expect watertight geometry.
+  v1.3  — Simple/Advanced mode tabs (Simple hides tooling/motion,
+          keeping sensible defaults); mm/in unit toggle (display and
+          typed values convert, but G-code always exports in mm);
+          every slider now has a paired editable number input, kept
+          in sync in both directions.
+  v1.2  — hover tooltips on every control (board, carve, tooling,
+          motion params, and both buttons), body-appended to escape
+          the scrollable side panel — same technique as the tooltip
+          system in Modulor Massing.
+  v1.1  — flipped the relief colormap: color and physical shading were
+          fighting each other (loud/deep areas rendered palest, but
+          the scene lighting naturally shadows recesses dark), making
+          the preview read muddy. Now pale birch = shallow/quiet,
+          scorched walnut = deep/loud, matching the shading direction.
+  v1.0  — three.js embedded inline (no CDN dependency); 3D render
+          failures no longer block G-code export; fixed a top-level
+          THREE.Vector3 reference that could kill the whole script
+          before any listeners attached; replaced click-proxy file
+          button with a native <label> (was recursing via bubbled
+          click events); window-level drag/drop capture so drops
+          outside the drop zone don't get hijacked by the browser;
+          added plain fallback file input + visible status/error
+          reporting in the main viewport.
+  v0.1  — initial build: STFT spectrogram -> heightmap -> raster
+          toolpath, roughing + finishing passes, live 3D preview.
 -->
 <script>
 /**
@@ -396,9 +814,55 @@
   @media (max-width: 1024px) {
     .app{ grid-template-columns: 280px 1fr; }
   }
+
+  /* Phone gate: below the tablet breakpoint above, the two-panel layout
+     + 3D viewport genuinely doesn't work — this project targets
+     tablet/desktop only, phones were never in scope. Rather than ship a
+     broken squeeze, show a plain message and hide the app underneath.
+     Pure CSS, no JS: the media query below is the only thing deciding
+     which of the two is visible. */
+  .phoneGate{
+    display:none; position:fixed; inset:0; z-index:9999;
+    background:var(--black); color:var(--ink);
+    align-items:center; justify-content:center; text-align:center; padding:32px;
+  }
+  .phoneGateInner{ max-width:320px; }
+  .phoneGateIcon{ width:88px; height:88px; margin:0 auto 26px; display:block; }
+  .phoneGateRule{ width:56px; height:1px; background:var(--line); margin:22px auto; }
+  .phoneGateTitle{
+    font-family:var(--sans); font-weight:600; font-size:20px;
+    letter-spacing:0.14em; text-transform:uppercase;
+  }
+  .phoneGateMsg{
+    font-family:var(--sans); font-size:14.5px; line-height:1.65;
+    color:var(--ink-dim); margin:0;
+  }
+  .phoneGateCredit{
+    font-family:var(--mono); font-size:11px; letter-spacing:0.08em; color:var(--accent-dim);
+  }
+  @media (max-width: 767px){
+    .phoneGate{ display:flex; }
+    .app{ display:none; }
+  }
 </style>
 </head>
 <body>
+<div class="phoneGate" id="phoneGate">
+  <div class="phoneGateInner">
+    <svg class="phoneGateIcon" viewBox="0 0 70 64" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="36" width="10" height="24" fill="var(--line)"/>
+      <rect x="17" y="16" width="10" height="44" fill="var(--accent)"/>
+      <rect x="30" y="44" width="10" height="16" fill="var(--line)"/>
+      <rect x="43" y="26" width="10" height="34" fill="var(--accent-dim)"/>
+      <rect x="56" y="50" width="10" height="10" fill="var(--line)"/>
+    </svg>
+    <div class="phoneGateRule"></div>
+    <div class="phoneGateTitle">Sound / Relief</div>
+    <p class="phoneGateMsg">This tool requires a tablet or desktop display for the two-panel layout and 3D viewport. Please open it on a larger screen.</p>
+    <div class="phoneGateRule"></div>
+    <div class="phoneGateCredit">Joe.K &middot; axisbim.io</div>
+  </div>
+</div>
 <div class="app">
   <header>
     <div class="titleBlock">
@@ -407,7 +871,7 @@
     </div>
     <div class="headerRight">
       <button type="button" class="helpBtn" id="helpBtn" data-tip="Full walkthrough: workflow, every control, tips from real testing.">? help</button>
-      <div class="credit" id="versionTag">v1.30 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
+      <div class="credit" id="versionTag">v1.31 &middot; Joe.K &middot; <a href="https://axisbim.io" target="_blank" rel="noopener">axisbim.io</a></div>
     </div>
   </header>
 
@@ -680,7 +1144,7 @@
   "use strict";
 
   // ---------- state ----------
-  const APP_VERSION = "1.30";
+  const APP_VERSION = "1.31";
   let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
