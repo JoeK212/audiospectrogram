@@ -213,11 +213,6 @@
   }
   .playSeekRow input[type=range]::-moz-range-track{ height:1px; background:var(--line); }
 
-  /* Custom dual-handle trim bar — a native range input only has one thumb,
-     no built-in way to represent a selected span between two points, so
-     this is plain divs positioned by percentage, same approach as the
-     preset dropdown for the same underlying reason (native control can't
-     do the thing, so build the thing). */
   .trimRow{ padding:9px 10px 4px; }
   .trimBar{ position:relative; height:18px; }
   .trimTrack{ position:absolute; top:8px; left:0; right:0; height:1px; background:var(--line); }
@@ -323,9 +318,6 @@
   .tabBtn.active{ background:var(--accent); color:var(--black); }
   .tabBtn:not(.active):hover{ color:var(--accent); }
 
-  /* Simple/Advanced: underline tabs, not a filled segmented control — this
-     is a view-mode switch (like Modulor Massing's tab convention), distinct
-     from mm/in which is a real binary setting and keeps the boxed style. */
   #modeTabs{ border:none; gap:18px; }
   #modeTabs .tabBtn{ border:none !important; padding:0 0 7px; border-bottom:2px solid transparent; }
   #modeTabs .tabBtn.active{ background:transparent; color:var(--ink); border-bottom-color:var(--accent); }
@@ -337,12 +329,6 @@
   }
   .presetSaveRow input:disabled{ color:var(--ink-dim); cursor:not-allowed; }
 
-  /* Custom dropdown, not a native <select> — native dropdown popups are
-     OS/browser-rendered and can't be restyled to match a dark theme at
-     all (no background color, no border, no font, nothing reachable from
-     CSS on the popup itself), so a real one always looks like a stock
-     Windows/Chrome listbox sitting inside an otherwise custom-styled app.
-     This is a plain div-based listbox instead, fully within our own CSS. */
   .customSelect{ position:relative; flex:1; min-width:0; }
   .customSelectBtn{
     width:100%; display:flex; justify-content:space-between; align-items:center;
@@ -387,20 +373,10 @@
   input.valInput:focus{ outline:none; border-bottom:1px solid var(--accent); }
   .unitSuffix{ color:var(--ink-dim); }
 
-  /* Tablet breakpoint only (~768-1024px, e.g. iPad portrait/landscape).
-     Narrows the fixed left panel so the 3D viewport keeps a usable amount
-     of room on a tablet-width screen. Desktop layout above is untouched;
-     phones (<768px) are intentionally not targeted. */
   @media (max-width: 1024px) {
     .app{ grid-template-columns: 280px 1fr; }
   }
 
-  /* Phone gate: below the tablet breakpoint above, the two-panel layout
-     + 3D viewport genuinely doesn't work — this project targets
-     tablet/desktop only, phones were never in scope. Rather than ship a
-     broken squeeze, show a plain message and hide the app underneath.
-     Pure CSS, no JS: the media query below is the only thing deciding
-     which of the two is visible. */
   .phoneGate{
     display:none; position:fixed; inset:0; z-index:9999;
     background:var(--black); color:var(--ink);
@@ -522,7 +498,7 @@
           <summary>Presets</summary>
           <p>Starter presets (Quick Test, Decorative Shallow, Deep Relief, Fine Detail) are fixed, always there, not deletable &mdash; ready-made starting points, not an empty save-your-own list.</p>
           <p>Your own presets: name it, hit Save &mdash; captures every board/carve/tooling/motion value (not the audio file itself, not camera/viewport state). Load instantly reapplies all of it.</p>
-          <p>Stored in this browser's local storage only &mdash; nothing leaves your machine. One real catch: local storage on <code>file://</code> pages (a downloaded copy opened directly, not the live site) can be unreliable &mdash; some browsers won't actually persist it. Presets work reliably on the deployed site (the axisbim.io link, top right). If Save silently doesn't show your preset afterward, that's almost certainly why &mdash; the app disables the whole Presets section on load if it detects storage genuinely isn't working, rather than let you save into a black hole.</p>
+          <p>Stored in this browser's local storage only &mdash; nothing leaves your machine. One real catch: local storage on <code>file:
         </details>
 
         <details>
@@ -723,9 +699,8 @@
 (function(){
   "use strict";
 
-  // ---------- state ----------
   const APP_VERSION = "1.31";
-  let heightmap = null;      // [freqRows][timeCols], 0..1, row0 = lowest freq
+  let heightmap = null;
   let audioDuration = 0;
   let scene, camera, renderer, mesh, wire;
   let orbit = { theta: Math.PI*0.28, phi: Math.PI*0.32, radius: 380, target: {x:0,y:0,z:0} };
@@ -736,9 +711,7 @@
   let xrayEnabled = false, boardWireframe = null;
   let sectionLine = null;
   let audioCtx = null, playSourceNode = null, isPlaying = false, playStartCtxTime = 0, playPausedAt = 0, playheadLine = null;
-  // Visual depth exaggeration shared by buildMesh (the relief surface) and
-  // the section cutline (so the cutline's vertical extent always matches
-  // the actual slab/relief geometry instead of a second hardcoded guess).
+
   const PREVIEW_EXAGGERATION = 3.2;
 
   const $ = id => document.getElementById(id);
@@ -765,9 +738,6 @@
     log("unhandled error: " + ((r && (r.message||r.name)) || r), "warn");
   });
 
-  // ---------- critical wiring: runs first, before anything that could fail ----------
-  // handleFile is declared with `function` so it's hoisted and callable here
-  // even though its own definition appears later in the file.
   const drop = $("drop"), fileInput = $("fileInput");
   fileInput.addEventListener("change", e=>{ if(e.target.files[0]) handleFile(e.target.files[0]); });
   const fallbackInput = $("fallbackInput");
@@ -792,7 +762,6 @@
 
   log(typeof THREE !== "undefined" ? "app ready, three.js loaded" : "app ready — three.js failed to load (3D preview won't work, but file upload and G-code export still will)", typeof THREE !== "undefined" ? "ok" : "warn");
 
-  // ---------- hover tooltips (body-appended to escape the scrollable panel) ----------
   (function initTooltips(){
     let tipEl = null;
     function hideTip(){
@@ -824,15 +793,6 @@
     window.addEventListener("scroll", hideTip, true);
     window.addEventListener("resize", hideTip);
 
-    // Small "?" badge on every field/toggle label that has a tooltip — the
-    // whole row is already hoverable for the tip, but nothing signaled that
-    // visually. One pass over existing [data-tip] wrappers rather than
-    // hand-adding a span to every field block, so it can't drift out of
-    // sync if a field's tooltip is added/removed later.
-    // Wraps the label's own text node (not just prepends the icon) because
-    // .field label is itself flex+space-between between the label text and
-    // the value input — prepending a bare icon would turn that 2-item flex
-    // row into 3 items and break the alignment.
     document.querySelectorAll(".field[data-tip] > label, .toggle[data-tip] > label").forEach(label=>{
       const textNode = label.firstChild;
       if(!textNode || textNode.nodeType !== 3) return;
@@ -847,10 +807,9 @@
     });
   })();
 
-  // ---------- param bindings (unit-aware, editable) ----------
   const params = {};
   const MM_PER_IN = 25.4;
-  let unitSystem = "mm"; // 'mm' | 'in'
+  let unitSystem = "mm";
 
   const fieldDefs = [
     {id:"bw",     key:"boardW",    kind:"length", dm:0, di:2, label:"length"},
@@ -893,11 +852,7 @@
       const min = parseFloat(range.min), max = parseFloat(range.max);
       const rawMm = displayToMm(v, def.kind);
       const mmVal = Math.min(max, Math.max(min, rawMm));
-      // Silently substituting the clamped value (old behavior) looked
-      // exactly like the input being ignored/reverted — e.g. typing "1"
-      // (meaning 1 inch = 25.4mm) against max depth's 1-20mm range
-      // clamped to 20mm (0.787in) with zero indication that a limit was
-      // hit at all. Now it says so.
+
       if(Math.abs(rawMm - mmVal) > 1e-6){
         const lo = mmToDisplay(min, def.kind), hi = mmToDisplay(max, def.kind);
         const dec = (unitSystem==="mm"||def.kind==="plain") ? def.dm : def.di;
@@ -918,11 +873,6 @@
   const boundFields = fieldDefs.map(bindField);
   function refreshAllDisplays(){ boundFields.forEach(f => f._refresh()); }
 
-  // Editing the length field directly recalibrates mmPerSecond rather than
-  // just resizing the current trim's output — otherwise a manual edit
-  // would get silently overwritten the next time trim changes. Runs after
-  // bindField's own listeners (registered above) have already updated
-  // params.boardW, so this reads the final new value.
   function recalibrateScaleFromBoardWEdit(){
     if(boardWProgrammaticUpdate || !heightmap) return;
     mmPerSecond = params.boardW / currentTrimDuration();
@@ -930,20 +880,8 @@
   $("bw").addEventListener("change", recalibrateScaleFromBoardWEdit);
   $("n_bw").addEventListener("change", recalibrateScaleFromBoardWEdit);
 
-  // ---------- presets (save/load/delete, localStorage-only) ----------
-  // Stores raw mm-space values — the same domain params[] and the range
-  // inputs already operate in regardless of the mm/in display toggle — so
-  // loading a preset never has to think about unit conversion, just like
-  // bindField()'s own range<->params relationship.
   const PRESET_KEY = "soundRelief.presets.v1";
 
-  // Fixed starter presets — always available regardless of storage,
-  // not saved to/loaded from localStorage, not deletable. Same role as
-  // Modulor Massing's Tower/Podium/Courtyard: ready-made starting points
-  // rather than an empty save-your-own list with nothing in it yet.
-  // Values checked against every field's actual slider min/max before
-  // shipping (see fieldDefs' range inputs) so none of these silently
-  // clamp on load.
   const BUILTIN_PRESETS = {
     "Quick Test": {
       boardW:150, boardH:100, maxDepth:3, maxFreq:3000,
@@ -966,7 +904,7 @@
       feed:700, plunge:250, safeZ:5, invert:false, roughing:true, unitSystem:"mm"
     },
   };
-  const BUILTIN_PREFIX = "__builtin__:"; // disambiguates a builtin's <option value> from a same-named user preset
+  const BUILTIN_PREFIX = "__builtin__:";
 
   function loadPresetStore(){
     try{
@@ -982,10 +920,7 @@
     try{
       const json = JSON.stringify(store);
       localStorage.setItem(PRESET_KEY, json);
-      // Some browsers let setItem() on a file:// page return normally
-      // without actually persisting anything — no exception, just a
-      // silent no-op. Reading it straight back catches that case instead
-      // of trusting "didn't throw" as proof it worked.
+
       if(localStorage.getItem(PRESET_KEY) !== json){
         log("preset didn't save — this browser isn't persisting storage for local files (file://). Presets work reliably on the deployed site (see the credit link in the header) since that's a stable origin, unlike a freshly re-downloaded file each time.", "warn");
         return false;
@@ -1071,23 +1006,20 @@
 
   function applyPreset(preset){
     fieldDefs.forEach(def => {
-      if(!(def.key in preset)) return; // tolerate presets saved by older versions missing a newer field
+      if(!(def.key in preset)) return;
       const v = preset[def.key];
       params[def.key] = v;
-      $(def.id).value = v; // ranges always store mm regardless of display unit — see bindField()
+      $(def.id).value = v;
     });
     if(typeof preset.invert === "boolean") $("invert").checked = preset.invert;
     if(typeof preset.roughing === "boolean") $("roughing").checked = preset.roughing;
     if(preset.unitSystem && preset.unitSystem !== unitSystem){
-      $("unitTabs").querySelector('[data-unit="' + preset.unitSystem + '"]').click(); // reuses existing unit-switch wiring, incl. its own refreshAllDisplays()
+      $("unitTabs").querySelector('[data-unit="' + preset.unitSystem + '"]').click();
     } else {
       refreshAllDisplays();
     }
     if(heightmap){
-      // The preset's boardW becomes the new full-track baseline — keeping
-      // a stale partial trim around would immediately shrink it again on
-      // the next trim-driven update, silently fighting the preset's own
-      // value. Fresh preset, fresh trim.
+
       if(isPlaying) stopPlayback();
       trimStart = 0; trimEnd = audioDuration;
       establishScale();
@@ -1138,7 +1070,6 @@
     if(e.key === "Escape"){ closePresetMenu(); closeHelp(); }
   });
 
-  // ---------- help modal ----------
   function openHelp(){ $("helpModal").hidden = false; }
   function closeHelp(){ $("helpModal").hidden = true; }
   $("helpBtn").addEventListener("click", openHelp);
@@ -1157,10 +1088,6 @@
     log("deleted preset \"" + name + "\"", "ok");
   });
 
-  // Self-test at startup rather than waiting for a save to silently fail —
-  // file:// pages are the main case where this trips (see savePresetStore),
-  // and it's better to visibly disable the feature than let someone save
-  // a preset that quietly never persists.
   (function checkPresetStorageAvailable(){
     try{
       const testKey = PRESET_KEY + ".selftest";
@@ -1204,7 +1131,6 @@
     rebuildTimer = setTimeout(()=>{ buildHeightmapFromCache(); }, 180);
   }
 
-  // ---------- FFT (radix-2, in-place) ----------
   function fft(re, im){
     const n = re.length;
     for (let i=1, j=0; i<n; i++){
@@ -1241,16 +1167,6 @@
     return w;
   }
 
-  // Self-contained STFT core — deliberately references nothing outside its
-  // own parameters plus fft/hannWindow (also self-contained). This lets it
-  // run two ways from ONE definition instead of two copies that could
-  // drift apart: injected into a Web Worker via .toString() (workers don't
-  // share scope with the main thread, so the source has to travel as
-  // text), or called directly as the synchronous fallback if Workers
-  // aren't available. Returns a flat Float32Array (frame-major) rather
-  // than nested arrays — flat transfers to/from a worker with zero copy
-  // via the postMessage transfer list; nested arrays would need a slow
-  // structured-clone walk.
   function runSTFTCore(rawSamples, rawSR, nperseg, noverlap, onProgress){
     const hop = nperseg - noverlap;
     const win = hannWindow(nperseg);
@@ -1259,7 +1175,7 @@
     const re = new Float32Array(nperseg), im = new Float32Array(nperseg);
     const dbFlat = new Float32Array(nFramesRaw * nBins);
     let maxDb = -Infinity;
-    const progressStep = Math.max(1, Math.floor(nFramesRaw/50)); // ~50 updates total, not one per frame
+    const progressStep = Math.max(1, Math.floor(nFramesRaw/50));
     for(let f=0; f<nFramesRaw; f++){
       const start = f*hop;
       for(let i=0;i<nperseg;i++){
@@ -1293,36 +1209,16 @@
     return { dbFlat, nFramesRaw, nBins, freqStepHz: rawSR/nperseg };
   }
 
-  // ---------- audio -> normalized dB spectrogram (full res) ----------
   let rawSamples=null, rawSR=0;
-  let dbGridFull=null;   // [frameIdx][freqBinIdx], 0..1 normalized
+  let dbGridFull=null;
   let freqStepHz=0, freqBinCount=0;
 
-  // Shared with buildHeightmapFromCache()'s trim-to-frame math below — one
-  // definition of "how many samples per STFT frame" instead of two copies
-  // that could drift apart (same reasoning as PREVIEW_EXAGGERATION).
   const STFT_NPERSEG = 1024, STFT_NOVERLAP = 768, STFT_HOP = STFT_NPERSEG - STFT_NOVERLAP;
 
-  // Trim range (seconds) — which window of the track feeds the
-  // relief/G-code, and (since v1.20) what Play/Stop/seek preview too —
-  // playback shows exactly what's selected, not the whole file. This
-  // still isn't turning into an audio editor: no cut/copy/fade/export of
-  // the audio itself, just "only analyze/preview this window". Reset
-  // per-file in decodeAndAnalyze.
   let trimStart = 0, trimEnd = 0;
 
-  // v1.21 — board length is a function of trim duration, not a fixed
-  // independent value. mmPerSecond is the single source of truth for the
-  // audio-to-mm scale: (length field value) ÷ (current trim duration).
-  // Established once per file (using whatever length is set at full-trim
-  // as the baseline), then reapplied whenever trim changes so the board
-  // always shrinks/grows to exactly the proportional slice — e.g. a 2s
-  // clip out of a 6.3s file at a 250mm baseline becomes ~79mm, not
-  // stretched to fill 250mm. Recalibrated if the user directly edits the
-  // length field (see the bw/n_bw listeners below fieldDefs), so typing a
-  // new length always means "this many mm for THIS trim selection."
   let mmPerSecond = 0;
-  let boardWProgrammaticUpdate = false; // guards against a trim-driven length update recalibrating the scale
+  let boardWProgrammaticUpdate = false;
 
   function establishScale(){
     mmPerSecond = audioDuration > 0 ? params.boardW / audioDuration : 0;
@@ -1336,9 +1232,7 @@
     if(mmPerSecond <= 0) return;
     let effectiveBoardW = mmPerSecond * currentTrimDuration();
     const range = $("bw");
-    // Very short trims can compute a length below the slider's own min —
-    // widen the floor rather than let the native range input silently
-    // clamp the value to something wrong. Never raises the min back up.
+
     const curMin = parseFloat(range.min);
     if(effectiveBoardW < curMin) range.min = String(Math.max(1, effectiveBoardW));
     boardWProgrammaticUpdate = true;
@@ -1400,12 +1294,6 @@
 
   let stftWorker = null;
 
-  // Builds the worker's source by concatenating fft/hannWindow/runSTFTCore
-  // as text (via .toString()) instead of hand-duplicating them into a
-  // separate worker file — one definition of the actual math, not two
-  // that could quietly drift apart. Workers can't share scope with the
-  // main thread, so this is the only way to get this code where it needs
-  // to run without a build step or a second source file.
   function buildSTFTWorker(){
     const src = [
       fft.toString(),
@@ -1427,22 +1315,18 @@
     return new Worker(URL.createObjectURL(blob));
   }
 
-  // Shared completion path for both the worker and the synchronous
-  // fallback — reconstructs the nested [frame][bin] structure
-  // buildHeightmapFromCache() and friends already expect, so nothing
-  // downstream needs to change to accommodate the flat transfer format.
   function finishSTFT(nFramesRaw, nBins, dbFlat, freqStepHzResult){
     const dbFrames = new Array(nFramesRaw);
     for(let f=0; f<nFramesRaw; f++){
       dbFrames[f] = dbFlat.subarray(f*nBins, f*nBins+nBins);
     }
-    dbGridFull = dbFrames; // [frame][bin] normalized 0..1
+    dbGridFull = dbFrames;
     freqBinCount = nBins;
     freqStepHz = freqStepHzResult;
     log(nFramesRaw + " frames x " + nBins + " freq bins analyzed", "ok");
-    trimStart = 0; trimEnd = audioDuration; // full track by default — must be set before the first build below
+    trimStart = 0; trimEnd = audioDuration;
     playPausedAt = trimStart;
-    establishScale(); // whatever length is currently set becomes the full-track baseline for this file
+    establishScale();
     buildHeightmapFromCache();
     $("downloadBtn").disabled = false;
     $("downloadStlBtn").disabled = false;
@@ -1486,7 +1370,7 @@
     stftWorker = worker;
 
     worker.onmessage = function(e){
-      if(stftWorker !== worker) return; // superseded by a newer file load — ignore stale results entirely
+      if(stftWorker !== worker) return;
       const msg = e.data;
       if(msg.type === "progress"){
         setStatus("analyzing " + Math.round(100 * msg.frame / msg.total) + "%");
@@ -1502,17 +1386,13 @@
       }
     };
     worker.onerror = function(err){
-      if(stftWorker !== worker) return; // superseded by a newer file load
+      if(stftWorker !== worker) return;
       log("analysis worker error: " + (err.message || "unknown"), "warn");
       setStatus("error");
       try{ worker.terminate(); }catch(e){}
       stftWorker = null;
     };
 
-    // rawSamples is still needed on the main thread afterward (playback
-    // reads it to build the AudioBuffer), so transfer a COPY's buffer,
-    // not the original — postMessage transfer zeroes out the source
-    // buffer once handed off, and the original must survive intact.
     const samplesCopy = rawSamples.slice();
     worker.postMessage(
       { rawSamples: samplesCopy, rawSR: rawSR, nperseg: STFT_NPERSEG, noverlap: STFT_NOVERLAP },
@@ -1520,7 +1400,6 @@
     );
   }
 
-  // ---------- resample full-res dB grid onto board-resolution grid ----------
   function buildHeightmapFromCache(){
     if(!dbGridFull) return;
     setStatus("building relief");
@@ -1534,12 +1413,6 @@
     if(freqIdxMax < 1) freqIdxMax = 1;
     const nOrigTime = dbGridFull.length;
 
-    // Board width maps to [trimStart, trimEnd] of the track, not always
-    // the full file — trimStart/trimEnd default to 0/audioDuration so this
-    // is a strict generalization of the old "always the whole track"
-    // behavior, not a special case. Frame index = time * sampleRate / hop,
-    // matching exactly how analyzeSTFT() laid frames out in the first
-    // place (same STFT_HOP constant, not a second copy of it).
     const frameStart = Math.max(0, Math.min(nOrigTime-1, Math.round(trimStart * rawSR / STFT_HOP)));
     const frameEnd = Math.max(frameStart+1, Math.min(nOrigTime-1, Math.round(trimEnd * rawSR / STFT_HOP)));
 
@@ -1574,14 +1447,6 @@
     $("s_dur").textContent = (trimEnd - trimStart).toFixed(1) + "s";
     $("s_grid").textContent = rows + " x " + cols;
 
-    // Worst-case per-row plunge distance — emitPass() retracts to safeZ
-    // and replunges at the start of EVERY row (see the "first" branch:
-    // G0 to safeZ, then G1 down to the cut depth at the plunge feedrate).
-    // That's not a rounding error to ignore: plunge is usually much
-    // slower than the cutting feed, and it happens once per row, not
-    // once per pass. Validated against a real G54.APP simulation of this
-    // app's own G-code output: adding this closed a 14.0% estimate error
-    // down to 2.6%.
     const plungeDist = params.maxDepth + params.safeZ;
     function passTime(passRows, pathPerRowMm, feedRate){
       const cutTime = (pathPerRowMm * passRows) / Math.max(feedRate, 1);
@@ -1600,7 +1465,6 @@
     $("s_time").textContent = (finishMin+roughMin).toFixed(0) + " min";
   }
 
-  // ---------- three.js scene ----------
   function initScene(){
     const container = $("viewport");
     orbit.target = new THREE.Vector3(0,0,0);
@@ -1635,11 +1499,6 @@
       orbit.radius = Math.max(60, Math.min(1400, orbit.radius + e.deltaY*0.4));
     }, {passive:false});
 
-    // Touch support (tablet): one-finger drag orbits, two-finger pinch zooms.
-    // Kept fully separate from the mouse handlers above so desktop mouse
-    // behavior is untouched. Uses Touch events (not Pointer Events) so a
-    // single finger drag doesn't also fire synthetic mouse events that would
-    // double up with the mousedown/mousemove handlers on some browsers.
     let touchDragging = false, pinchDist = null;
     function touchDist(t0, t1){
       const dx = t0.clientX-t1.clientX, dy = t0.clientY-t1.clientY;
@@ -1706,10 +1565,6 @@
     if(renderer) renderer.render(scene, camera);
   }
 
-  // ---------- navigation: home / top / front / right ----------
-  // Board center in local plane space is (0,0), and since mesh.rotation.x
-  // only rotates about the X axis, that maps to world origin (0,0,0) too —
-  // orbit.target stays at (0,0,0) for every preset, only theta/phi change.
   function setView(preset){
     autoRotate = false;
     const boardMax = mesh ? Math.max(params.boardW, params.boardH) : 300;
@@ -1718,12 +1573,8 @@
       orbit.theta = Math.PI*0.28; orbit.phi = Math.PI*0.32;
       orbit.radius = boardMax * 1.35;
     } else if(preset === "top"){
-      // Azimuth must match an axis-aligned preset so the board isn't a
-      // rotated diamond. At this near-vertical phi, +PI/2 (not -PI/2) is
-      // the azimuth that keeps screen-right = +worldX and screen-up =
-      // -worldZ, which is what puts the machine origin (min X, min Y —
-      // world -X, +Z) at the bottom-left of the view instead of top-right.
-      orbit.theta = Math.PI/2; orbit.phi = 0.06; // near-vertical, avoids the phi=0 gimbal edge
+
+      orbit.theta = Math.PI/2; orbit.phi = 0.06;
     } else if(preset === "front"){
       orbit.theta = -Math.PI/2; orbit.phi = Math.PI/2 - 0.06;
     } else if(preset === "right"){
@@ -1731,12 +1582,6 @@
     }
   }
 
-  // ---------- origin marker (machine X0/Y0, matches the G-code/STL origin) ----------
-  // The preview mesh is centered at world origin, but the G-code/STL use a
-  // corner origin (X:0..boardW, Y:0..boardH). mesh.rotation.x = -PI/2 maps
-  // local plane space (x,y,0) -> world (x, 0, -y), so the machine corner
-  // (local x=-boardW/2, y=-boardH/2) lands at world (-boardW/2, 0, boardH/2).
-  // Machine +X stays world +X; machine +Y is world -Z.
   function updateOriginMarker(){
     if(!scene) return;
     if(originGroup){ scene.remove(originGroup); }
@@ -1744,11 +1589,7 @@
     const ox = -params.boardW/2, oz = params.boardH/2;
     originGroup.position.set(ox, 1, oz);
     const len = Math.max(12, Math.min(params.boardW, params.boardH) * 0.12);
-    // Colors follow the ISO 841 / DIN CNC convention (X=red, Y=green,
-    // Z=blue) rather than this app's accent palette or three.js's Y-up
-    // world axes — the vertical arrow is machine Z (depth/height), and
-    // labeling it anything that could read as "Y" would be wrong outside
-    // the US too (Z-up / ISO-color convention is the norm, e.g. in Germany).
+
     const xArrow = new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), len, 0xd64545, len*0.28, len*0.16);
     const yArrow = new THREE.ArrowHelper(new THREE.Vector3(0,0,-1), new THREE.Vector3(0,0,0), len, 0x4fae5c, len*0.28, len*0.16);
     const zArrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), len*0.6, 0x4a8fd6, len*0.2, len*0.12);
@@ -1766,31 +1607,17 @@
     if(originGroup) originGroup.visible = originVisible;
   }
 
-  // ---------- section (push/pull) — reveals a cross-section of the actual carve ----------
-  // Clips the preview mesh + base slab along a world-X plane so the real
-  // (non-exaggerated-in-depth... note: depth IS still exaggerated in this
-  // preview, same as the rest of the 3D view) carve profile is visible.
-  // sectionPos is tracked in G-code/STL mm (0..boardW) so the readout means
-  // the same thing it means everywhere else in this app; it's converted to
-  // world X (which is centered on the board) only for the THREE.Plane.
-  let sectionPosInitialized = false; // tracks whether sectionPos has ever been given a real value
+  let sectionPosInitialized = false;
   let sectionPlane = null;
 
   function updateSectionClipping(){
     if(!mesh) return;
-    // Single clip plane: keeps everything on one side of the cut, removes
-    // the other. This was briefly changed to a two-plane "isolate a thin
-    // slice" version, but that made the default view (cut at the very
-    // edge) look like almost nothing was visible — worse, not better.
-    // Reverted to match the known-good reference: most of the board stays
-    // visible, only the sliver beyond the cut is removed, and starting
-    // the cut at X=0 (the origin) means there's really nothing to clip
-    // away yet on load — that's expected, not broken.
+
     if(!sectionPosInitialized){
       sectionPos = 0;
       sectionPosInitialized = true;
     } else {
-      sectionPos = Math.max(0, Math.min(params.boardW, sectionPos)); // stay in range if the board was resized
+      sectionPos = Math.max(0, Math.min(params.boardW, sectionPos));
     }
     const slider = $("sectionSlider");
     if(slider){ slider.max = String(Math.round(params.boardW)); slider.value = String(Math.round(sectionPos)); }
@@ -1799,7 +1626,7 @@
     const normal = sectionFlipped ? -1 : 1;
     if(!sectionPlane) sectionPlane = new THREE.Plane(new THREE.Vector3(normal,0,0), 0);
     else sectionPlane.normal.set(normal,0,0);
-    sectionPlane.constant = -normal * worldX; // keep normal·point + constant >= 0, i.e. the `normal` side of worldX
+    sectionPlane.constant = -normal * worldX;
     const planes = sectionEnabled ? [sectionPlane] : [];
     mesh.material.clippingPlanes = planes;
     const slab = scene && scene.getObjectByName("slab");
@@ -1811,33 +1638,11 @@
     updateSectionLine(worldX);
   }
 
-  // Red trace marking exactly where the section plane cuts, so the cut
-  // isn't just implied by the exposed face — it's easy to lose track of
-  // which line on the board the depth reading actually corresponds to.
-  // Traces the real carved profile at that column (same vertex math
-  // buildMesh uses: freqRow flip, invert, exaggeration) so the line reads
-  // as "this is the depth here", not just an abstract marker.
-  //
-  // Closed loop (bottom cap + side verticals framing the profile), not
-  // just an open trace — reverted back to this after the open-trace
-  // version turned out harder to read against the (now much larger,
-  // single-plane) visible remainder of the board.
-  //
-  // Built as a tube mesh, not a THREE.Line — most WebGL implementations
-  // ignore LineBasicMaterial.linewidth entirely (a driver limitation, not
-  // a three.js bug), so a plain Line stays hairline-thin no matter what
-  // width you ask for. A tube has real geometry and reads as bold at any
-  // zoom. It's also nudged off the cut face into the removed side so it
-  // sits visibly proud of the surface instead of z-fighting with it.
-  //
-  // computeColumnProfile() is shared with the playback playhead below —
-  // one column-index-to-depth-profile calculation, not two copies that
-  // could quietly drift apart (same reasoning as PREVIEW_EXAGGERATION).
   function computeColumnProfile(ix){
     const rows = heightmap.length;
     const boardH = params.boardH;
     const invert = $("invert").checked;
-    const profile = []; // [worldY(depth), worldZ] pairs, iy 0..rows-1 -> worldZ -boardH/2..+boardH/2
+    const profile = [];
     for(let iy=0; iy<rows; iy++){
       const freqRow = rows-1-iy;
       let h = heightmap[freqRow][ix];
@@ -1856,7 +1661,7 @@
     const boardW = params.boardW, boardH = params.boardH;
     const halfH = boardH/2 * 1.02;
     const slabThickness = params.maxDepth * PREVIEW_EXAGGERATION * 1.4;
-    const bottom = -(slabThickness + 0.5) - 3; // a hair below the slab's underside
+    const bottom = -(slabThickness + 0.5) - 3;
 
     const ix = Math.max(0, Math.min(cols-1, Math.round((sectionPos/boardW) * (cols-1))));
     const profile = computeColumnProfile(ix);
@@ -1864,7 +1669,7 @@
 
     const radius = Math.max(1.1, Math.min(boardW, boardH) * 0.009);
     const normal = sectionFlipped ? -1 : 1;
-    const punchX = worldX - normal * radius * 1.8; // pop out toward the removed side
+    const punchX = worldX - normal * radius * 1.8;
 
     const pts = [ new THREE.Vector3(punchX, bottom, -halfH) ];
     for(const [wy, wz] of profile) pts.push(new THREE.Vector3(punchX, wy, wz));
@@ -1877,28 +1682,16 @@
     const tubeGeo = new THREE.TubeGeometry(curvePath, pts.length*2, radius, 6, true);
     const tubeMat = new THREE.MeshBasicMaterial({ color: 0xe63b30, depthTest: false });
     sectionLine = new THREE.Mesh(tubeGeo, tubeMat);
-    sectionLine.renderOrder = 999; // draw on top so it reads clearly against the cut face
+    sectionLine.renderOrder = 999;
     scene.add(sectionLine);
   }
 
-  // ---------- audio playback with a synced playhead on the relief ----------
-  // Reuses rawSamples/rawSR (already decoded for the STFT — no re-decode,
-  // no re-upload) to build a throwaway AudioBuffer for playback only. The
-  // playhead is an OPEN top-profile trace (not a closed section outline —
-  // it isn't cutting anything, just reading out "this is the terrain here
-  // right now"), so it stays visually distinct from the red section tool
-  // even if both are active at once.
   function updatePlayheadAt(t){
     if(playheadLine){ scene.remove(playheadLine); playheadLine.geometry.dispose(); playheadLine.material.dispose(); playheadLine = null; }
     if(!scene || !heightmap) return;
     const cols = heightmap[0].length;
     const boardW = params.boardW;
-    // Board length represents [trimStart, trimEnd] since v1.21, not the
-    // whole file — t/audioDuration was the pre-trim formula and put the
-    // marker at the wrong spot on the (now proportionally shrunk) board
-    // the moment trim no longer matched the full file exactly. Same
-    // "position within the selection, not within the file" fix as the
-    // seek bar's own bounds.
+
     const trimDur = Math.max(0.01, trimEnd - trimStart);
     const frac = Math.max(0, Math.min(1, (t - trimStart) / trimDur));
     const ix = Math.max(0, Math.min(cols-1, Math.round(frac * (cols-1))));
@@ -1906,7 +1699,7 @@
     const profile = computeColumnProfile(ix);
     if(profile.length < 2) return;
 
-    const pts = profile.map(([wy, wz]) => new THREE.Vector3(worldX, wy + 2, wz)); // +2: lift clear of the surface
+    const pts = profile.map(([wy, wz]) => new THREE.Vector3(worldX, wy + 2, wz));
     const curvePath = new THREE.CurvePath();
     for(let i=0;i<pts.length-1;i++) curvePath.add(new THREE.LineCurve3(pts[i], pts[i+1]));
     const radius = Math.max(0.9, Math.min(params.boardW, params.boardH) * 0.007);
@@ -1916,9 +1709,6 @@
     playheadLine.renderOrder = 998;
     scene.add(playheadLine);
 
-    // Shows absolute position in the file (matches the seek bar's own
-    // min/max, which are [trimStart, trimEnd]) — trimEnd as "total", not
-    // the full file's audioDuration, since that's not what's playing.
     $("playTime").textContent = fmtTime(t) + " / " + fmtTime(trimEnd);
   }
 
@@ -1941,20 +1731,9 @@
       audioCtx = new AC();
     }
     if(audioCtx.state === "suspended") audioCtx.resume();
-    // Snap into the trim window if the paused position is outside it —
-    // covers "never played yet" (playPausedAt starts at 0, which is
-    // before trimStart unless trim is untouched) and "trim changed while
-    // paused mid-window". Playback previews exactly what's trimmed, not
-    // the whole file, so there's no valid paused position outside
-    // [trimStart, trimEnd] to resume from.
+
     if(playPausedAt < trimStart || playPausedAt >= trimEnd) playPausedAt = trimStart;
-    // Stop any already-running source first — this used to only ever be
-    // called from a clean stopped/paused state, but seek/nudge now call it
-    // to restart from a new position while already playing. Web Audio
-    // doesn't support repositioning a started AudioBufferSourceNode, so
-    // "restart from playPausedAt" is really "throw away the old node,
-    // make a new one" — skipping this would leave the old node playing
-    // in the background, overlapping the new one.
+
     if(playSourceNode){ try{ playSourceNode.stop(); }catch(e){} playSourceNode = null; }
     const buffer = audioCtx.createBuffer(1, rawSamples.length, rawSR);
     buffer.copyToChannel(rawSamples, 0);
@@ -1982,7 +1761,7 @@
   function stopPlayback(){
     if(playSourceNode){ try{ playSourceNode.stop(); }catch(e){} playSourceNode = null; }
     isPlaying = false;
-    playPausedAt = trimStart; // reset to the start of the current selection, not always 0
+    playPausedAt = trimStart;
     $("navPlay").textContent = "play";
     $("navPlay").classList.remove("active");
     $("playSeek").value = trimStart.toFixed(1);
@@ -1995,11 +1774,6 @@
     else startPlayback();
   }
 
-  // ---------- seek/nudge ----------
-  // Seek bar and nudge are scoped to [trimStart, trimEnd] — the trim
-  // window is "this is my selection", so playback previews exactly that,
-  // not the whole file. syncSeekBounds() keeps the slider's min/max
-  // matching the current trim whenever it changes.
   let seekDragging = false, wasPlayingBeforeSeek = false;
 
   function syncSeekBounds(){
@@ -2015,7 +1789,7 @@
     t = Math.max(trimStart, Math.min(trimEnd, t));
     playPausedAt = t;
     $("playSeek").value = t.toFixed(1);
-    if(isPlaying) startPlayback(); // restarts from the new playPausedAt
+    if(isPlaying) startPlayback();
     else updatePlayheadAt(t);
   }
 
@@ -2031,11 +1805,10 @@
     if(!rawSamples || !heightmap) return;
     seekDragging = true;
     wasPlayingBeforeSeek = isPlaying;
-    if(isPlaying) pausePlayback(); // freezes at the current position; drag preview takes over from here
+    if(isPlaying) pausePlayback();
   });
   $("playSeek").addEventListener("input", (e)=>{
-    // Live preview while dragging — moves the 3D marker and time readout
-    // without touching audio playback state (that only happens on release).
+
     const t = Number(e.target.value);
     playPausedAt = t;
     updatePlayheadAt(t);
@@ -2044,20 +1817,16 @@
     seekDragging = false;
     const t = Number(e.target.value);
     playPausedAt = t;
-    if(wasPlayingBeforeSeek) startPlayback(); // resume from the scrubbed-to position
+    if(wasPlayingBeforeSeek) startPlayback();
     else updatePlayheadAt(t);
   });
 
-  // ---------- trim (which window of the track feeds the relief) ----------
-  // Scoped together with playback (not independent — see v1.20 note above
-  // trimStart/trimEnd's declaration): changing the trim also updates what
-  // Play/Stop/seek preview, via applyTrimChange() below.
-  let trimDragHandle = null; // 'start' | 'end' | null while a handle is being dragged
+  let trimDragHandle = null;
 
   function clampTrim(movedHandle){
     trimStart = Math.max(0, Math.min(trimStart, audioDuration));
     trimEnd = Math.max(0, Math.min(trimEnd, audioDuration));
-    const minGap = Math.min(0.5, audioDuration || 0.5); // keep at least a sliver of a window
+    const minGap = Math.min(0.5, audioDuration || 0.5);
     if(trimEnd - trimStart < minGap){
       if(movedHandle === "start") trimStart = Math.max(0, trimEnd - minGap);
       else trimEnd = Math.min(audioDuration, trimStart + minGap);
@@ -2082,14 +1851,9 @@
     return frac * audioDuration;
   }
 
-  // Shared by all three ways a trim can change (drag release, either
-  // numeric field, reset button) — sync the seek bar's bounds to match,
-  // and if the current playback position (live or paused) no longer
-  // falls inside the new window, snap it back to trimStart rather than
-  // leaving playback pointing somewhere the selection no longer covers.
   function applyTrimChange(){
     syncSeekBounds();
-    applyTrimToBoardLength(); // shrinks/grows the board length to match this trim's proportional slice
+    applyTrimToBoardLength();
     const pos = currentPlaybackTime();
     if(pos < trimStart || pos > trimEnd){
       if(isPlaying) stopPlayback();
@@ -2155,20 +1919,10 @@
     sectionEnabled = !sectionEnabled;
     $("navSection").classList.toggle("active", sectionEnabled);
     $("sectionBar").style.display = sectionEnabled ? "flex" : "none";
-    updateSectionClipping(); // handles sectionPos defaulting/clamping and slider sync itself
-    // No forced camera reframing here — that was only needed for the
-    // two-plane thin-slice version, where 95%+ of the board vanished and
-    // the default 3/4 view read as a confusing sliver. Single-plane
-    // clipping keeps most of the board visible, so the normal view (same
-    // one the user was already looking at) still makes sense untouched.
+    updateSectionClipping();
+
   }
 
-  // ---------- x-ray: ghost the stock + show the real board envelope ----------
-  // Deliberately NOT clipping-plane based — this only ever touches material
-  // opacity and a bounding-box wireframe, neither of which has a "position"
-  // that can be wrong the way a clip plane's can. If this doesn't render
-  // correctly, the bug is in the renderer/materials generally, not in a
-  // piece of state this feature introduced.
   function toggleXray(){
     xrayEnabled = !xrayEnabled;
     $("navXray").classList.toggle("active", xrayEnabled);
@@ -2181,7 +1935,7 @@
     if(slab){
       slab.material.transparent = xrayEnabled;
       slab.material.opacity = xrayEnabled ? 0.15 : 1;
-      slab.material.depthWrite = !xrayEnabled; // avoid transparent-sort artifacts hiding the relief inside
+      slab.material.depthWrite = !xrayEnabled;
       slab.material.needsUpdate = true;
     }
     updateBoardWireframe();
@@ -2207,17 +1961,6 @@
 
   let reachabilityEnabled = false;
 
-  // A ball-nose (or any round-nosed) bit of radius r physically cannot
-  // reach into a valley narrower than its own diameter — the tool body
-  // contacts a neighboring peak before the cutting edge reaches the
-  // bottom. This is standard CAM theory: the achievable surface is the
-  // grayscale dilation of the target surface by a ball of radius r. For
-  // each point, scan every neighbor within horizontal distance r and find
-  // the shallowest Z the ball is forced to stop at because that neighbor
-  // must stay higher. Returns a [row][col] grid of "deficit" values in
-  // mm — 0 where the target is fully reachable, >0 where the bit will
-  // leave that point shallower/wider than the preview shows, regardless
-  // of how many passes are run.
   function computeReachabilityDeficit(){
     if(!heightmap) return null;
     const rows = heightmap.length, cols = heightmap[0].length;
@@ -2243,7 +1986,7 @@
       deficit[row] = new Float32Array(cols);
       for(let col=0; col<cols; col++){
         const targetHere = targetZ(row, col);
-        let achievable = targetHere; // baseline: the point's own target (distance-0 case)
+        let achievable = targetHere;
         for(let dr=-rCellsY; dr<=rCellsY; dr++){
           const nr = row+dr;
           if(nr<0 || nr>=rows) continue;
@@ -2259,7 +2002,7 @@
             if(bound > achievable) achievable = bound;
           }
         }
-        deficit[row][col] = achievable - targetHere; // >=0mm, shallower than target
+        deficit[row][col] = achievable - targetHere;
       }
     }
     return deficit;
@@ -2270,12 +2013,7 @@
     $("navReach").classList.toggle("active", reachabilityEnabled);
     if(!heightmap) return;
     if(reachabilityEnabled){
-      // Worst case (max board length + max bit diameter) is ~1.6s of
-      // main-thread work — rare, but real, and bounded (unlike arbitrary
-      // audio file sizes, so a full Worker migration isn't proportionate
-      // here). Deferring one tick lets the button's active state and this
-      // status message actually paint before the computation blocks,
-      // instead of the whole thing looking like a silent freeze.
+
       setStatus("checking reachability...");
       setTimeout(()=>{ buildMesh(); setStatus("ready"); }, 10);
     } else {
@@ -2284,10 +2022,7 @@
   }
 
   function colorFor(h){
-    // carved-wood colormap: pale birch surface (quiet/shallow) darkening
-    // to scorched walnut in the recesses (loud/deep). Ordered to match
-    // the scene lighting — deep areas are naturally shadowed, so color
-    // and shading reinforce each other instead of canceling out.
+
     const stops = [
       [0.00, 0xe8,0xd5,0xa3],
       [0.35, 0xb8,0x87,0x4a],
@@ -2313,7 +2048,7 @@
 
     const rows = heightmap.length, cols = heightmap[0].length;
     const boardW = params.boardW, boardH = params.boardH;
-    const exaggeration = PREVIEW_EXAGGERATION; // visual exaggeration so mm-scale depth reads clearly
+    const exaggeration = PREVIEW_EXAGGERATION;
     const invert = $("invert").checked;
 
     const geo = new THREE.PlaneGeometry(boardW, boardH, cols-1, rows-1);
@@ -2321,11 +2056,11 @@
     const colors = new Float32Array(pos.count*3);
 
     const deficitGrid = reachabilityEnabled ? computeReachabilityDeficit() : null;
-    const REACH_THRESHOLD_MM = 0.05; // ignore floating-point-noise-level deficits
+    const REACH_THRESHOLD_MM = 0.05;
     let flaggedCount = 0, worstDeficit = 0;
 
     for(let iy=0; iy<rows; iy++){
-      const freqRow = rows-1-iy; // top of plane = highest frequency
+      const freqRow = rows-1-iy;
       for(let ix=0; ix<cols; ix++){
         const vIdx = iy*cols+ix;
         let h = heightmap[freqRow][ix];
@@ -2372,7 +2107,6 @@
     mesh.rotation.x = -Math.PI/2;
     scene.add(mesh);
 
-    // base slab for context
     if(!scene.getObjectByName("slab")){
       const slabGeo = new THREE.BoxGeometry(1,1,1);
       const slabMat = new THREE.MeshStandardMaterial({ color:0x1a1712, roughness:0.95 });
@@ -2393,10 +2127,6 @@
     applyXray();
   }
 
-  // ---------- G-code generation ----------
-  // Shared by generateGCode() and updateStats() so the level count used to
-  // actually cut and the level count used to estimate machining time can
-  // never drift apart into two different numbers.
   function roughingLevelCount(){
     const deepestRoughZ = Math.min(0, -params.maxDepth + params.allowance);
     const stepdown = Math.max(0.1, params.stepdown);
@@ -2460,13 +2190,6 @@
       lines.push("M5");
     }
 
-    // Real multi-level stepdown roughing: clear bulk material in flat
-    // Z-level slices at most `stepdown` mm apart, instead of plunging the
-    // full relief depth in one pass. At each level, cut to max(levelZ,
-    // roughTarget(h)) — flat everywhere the relief is still deeper than
-    // this level, following the relief's own contour anywhere it's
-    // already shallower than this level (so a pass never re-cuts material
-    // that's already at its rough target, and never gouges past it).
     function roughTarget(h){ return Math.min(0, finalZ(h) + params.allowance); }
     if(doRough){
       const roughStepover = params.roughBit*0.5;
@@ -2490,21 +2213,13 @@
     return lines.join("\n");
   }
 
-  // ---------- STL export ----------
-  // Deliberately independent of `mesh`/`scene` — same reasoning as G-code:
-  // a 3D preview failure must not block this. Built straight from the
-  // heightmap grid, in real board mm and real (non-exaggerated) depths, in
-  // the *same* coordinate space as generateGCode() above, so what you see
-  // in a slicer matches what the CNC will actually cut. This is a solid
-  // (top relief + flat base + side walls), not just the top surface —
-  // slicers expect closed/manifold geometry, not an open sheet.
   function generateSTL(){
     if(!heightmap) return null;
     const rows = heightmap.length, cols = heightmap[0].length;
     const boardW = params.boardW, boardH = params.boardH;
     const invert = $("invert").checked;
     const maxDepth = params.maxDepth;
-    const baseThickness = Math.max(3, maxDepth * 0.5); // solid stock below the deepest cut
+    const baseThickness = Math.max(3, maxDepth * 0.5);
     const zBase = -(maxDepth + baseThickness);
 
     function finalZ(h){ return -(invert ? 1-h : h) * maxDepth; }
@@ -2517,8 +2232,6 @@
     const topZ = new Float32Array(rows*cols);
     for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) topZ[r*cols+c] = finalZ(heightmap[r][c]);
 
-    // triangle count: top surface (needs full grid resolution — it's the
-    // actual relief) + a single flat bottom quad (see below) + four sides
     const nTop = (rows-1)*(cols-1)*2;
     const nBottom = 2;
     const nSides = ((rows-1)*2 + (cols-1)*2) * 2;
@@ -2526,7 +2239,7 @@
 
     const buf = new ArrayBuffer(84 + nTri*50);
     const dv = new DataView(buf);
-    let off = 80; // 80-byte header left zeroed
+    let off = 80;
     dv.setUint32(off, nTri, true); off += 4;
 
     function writeTri(ax,ay,az, bx,by,bz, cx,cy,cz){
@@ -2542,7 +2255,6 @@
       dv.setUint16(off, 0, true); off+=2;
     }
 
-    // top relief surface
     for(let r=0;r<rows-1;r++){
       for(let c=0;c<cols-1;c++){
         const x0=xCoords[c], x1=xCoords[c+1], y0=yCoords[r], y1=yCoords[r+1];
@@ -2552,24 +2264,14 @@
         writeTri(x0,y0,z00, x1,y1,z11, x0,y1,z01);
       }
     }
-    // flat bottom — a single quad, not one per grid cell. The bottom is
-    // perfectly flat everywhere, so subdividing it at the top surface's
-    // grid resolution was ~50% of the file's triangles for zero visual
-    // or volumetric benefit. The side walls' bottom edges are already at
-    // this same zBase and run along these same four boundary lines, so
-    // the solid stays fully closed (no gaps) — the one geometric trade
-    // is that this creates T-junctions where the single long bottom edge
-    // meets the side walls' many smaller boundary segments, rather than
-    // a perfectly 1:1 shared-edge triangulation. That's a non-issue for
-    // slicers/CAM viewers (surface is still fully covered, no holes) but
-    // worth knowing if something ever runs a strict manifold validator.
+
     {
       const X0 = xCoords[0], X1 = xCoords[cols-1];
       const Y0 = yCoords[0], Y1 = yCoords[rows-1];
       writeTri(X0,Y0,zBase, X1,Y1,zBase, X1,Y0,zBase);
       writeTri(X0,Y0,zBase, X0,Y1,zBase, X1,Y1,zBase);
     }
-    // side walls: front (r=0), back (r=rows-1), left (c=0), right (c=cols-1)
+
     for(let c=0;c<cols-1;c++){
       const x0=xCoords[c], x1=xCoords[c+1];
       let y=yCoords[0], z0=topZ[c], z1=topZ[c+1];
@@ -2613,12 +2315,10 @@
     log("g-code exported (" + (txt.split("\n").length) + " lines)", "ok");
   }
 
-  // ---------- remaining button wiring ----------
   $("downloadBtn").addEventListener("click", download);
   $("downloadStlBtn").addEventListener("click", downloadSTL);
   $("recomputeBtn").addEventListener("click", ()=>{ if(dbGridFull) buildHeightmapFromCache(); });
 
-  // ---------- navigation toolbar wiring ----------
   $("navPlay").addEventListener("click", togglePlay);
   $("navStop").addEventListener("click", stopPlayback);
   $("navHome").addEventListener("click", ()=> setView("home"));
