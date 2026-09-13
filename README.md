@@ -25,5 +25,6 @@ the source of truth if these drift out of date.
 
 - Codec support depends on the browser's native decoder.
 - Touch support targets tablets; phone-width screens show a "please use a tablet or desktop" message instead of the app.
-
-— Joe.K · axisbim.io
+- 
+---
+Joe.K · [axisbim.io](https://axisbim.io)
